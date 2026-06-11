@@ -9,30 +9,7 @@ on:
             - main
             - dev
             
-jobs:
-    Check-Updates:
-        runs-on: ubuntu-latest
-        outputs:
-            upstream_tag: ${{ steps.check.outputs.upstream_tag }}
-        steps:
-            - name: Checkout repo
-              uses: actions/checkout@v6
-
-            - name: Check upstream
-              id: check
-              run: |
-                  # get newest tag from official equicord repo
-                  UPSTREAM=$(gh api repos/Equicord/Equicord/releases/latest --jq .tag_name)
-                  echo "upstream_tag=$UPSTREAM" >> "$GITHUB_OUTPUT"
-                  
-                  # check if we already pushed this tag to our fork
-                  if git ls-remote --tags origin | grep -q "refs/tags/$UPSTREAM"; then
-                      echo "already up to date with $UPSTREAM! aborting workflow."
-                      exit 1 # this forcefully crashes and fails the job!
-                  else
-                      echo "new version found: $UPSTREAM!"
-                  fi
-                  
+jobs:      
     Test:
         name: Test
         runs-on: ubuntu-latest
