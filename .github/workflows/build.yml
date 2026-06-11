@@ -5,7 +5,7 @@ on:
             - main
     workflow_dispatch:
     schedule:
-    - cron: '0 12 */2 * *'
+    - cron: '5 0/12 * * *'
 
 env:
     FORCE_COLOR: true
@@ -17,10 +17,37 @@ permissions:
     contents: write
 
 jobs:
+    Check-Updates:
+        runs-on: ubuntu-latest
+        outputs:
+            should_build: ${{ steps.check.outputs.should_build }}
+            upstream_tag: ${{ steps.check.outputs.upstream_tag }}
+        steps:
+            - name: Checkout repo
+              uses: actions/checkout@v6
+
+            - name: Check upstream
+              id: check
+              run: |
+                  # get newest tag from official equicord repo
+                  UPSTREAM=$(gh api repos/Equicord/Equicord/releases/latest --jq .tag_name)
+                  echo "upstream_tag=$UPSTREAM" >> "$GITHUB_OUTPUT"
+                  
+                  # check if we already pushed this tag to our fork
+                  if git ls-remote --tags origin | grep -q "refs/tags/$UPSTREAM"; then
+                      echo "already up to date with $UPSTREAM! skipping build quietly."
+                      echo "should_build=false" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "new version found: $UPSTREAM!"
+                      echo "should_build=true" >> "$GITHUB_OUTPUT"
+                  fi
+
     Build:
+        needs: Check-Updates
+        if: needs.Check-Updates.outputs.should_build == 'true' || github.event_name == 'workflow_dispatch'
         name: Build Equicord
         runs-on: ubuntu-latest
-        
+
         steps:
             - uses: actions/checkout@v6
 
