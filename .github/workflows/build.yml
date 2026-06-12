@@ -19,7 +19,6 @@ permissions:
 
 jobs:
     Build:
-        needs: Check-Updates
         name: Build Equicord
         runs-on: ubuntu-latest
 
