@@ -465,7 +465,7 @@ function createOverlay() {
 export default definePlugin({
     name:        "DiscordLock",
     description: "Locks Discord on startup, on inactivity, and on specified servers/channels/DMs.",
-    authors:     [{ name: "vejcowski", id: 1375544683908042862n }],
+    authors: [EquicordDevs.null]
     settings,
 
     start() {
