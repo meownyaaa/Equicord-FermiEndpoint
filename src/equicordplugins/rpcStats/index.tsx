@@ -7,14 +7,13 @@
 import { DataStore } from "@api/index";
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
-import definePlugin, { OptionType, PluginNative } from "@utils/types";
+import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
 import { ApplicationAssetUtils, FluxDispatcher, IconUtils, UserStore } from "@webpack/common";
 
 enum StatsDisplay {
     MessagesSentToday,
-    MessagesSentAllTime,
-    MostListenedAlbum
+    MessagesSentAllTime
 }
 
 export async function getApplicationAsset(key: string): Promise<string> {
@@ -43,44 +42,15 @@ const settings = definePluginSettings({
         description: "What should the RPC display?",
         options: [
             { value: StatsDisplay.MessagesSentToday, label: "The amount of messages sent today", default: true },
-            { value: StatsDisplay.MessagesSentAllTime, label: "The amount of messages sent all time" },
-            { value: StatsDisplay.MostListenedAlbum, label: "Your most listened album for the week" }
+            { value: StatsDisplay.MessagesSentAllTime, label: "The amount of messages sent all time" }
         ],
-        restartNeeded: false,
-        onChange: () => updateData()
-    },
-    lastFMApiKey: {
-        type: OptionType.STRING,
-        description: "Your Last.fm API key.",
-        default: "",
-        restartNeeded: false,
-        onChange: () => updateData()
-    },
-    lastFMUsername: {
-        type: OptionType.STRING,
-        description: "Your Last.fm username.",
-        default: "",
-        restartNeeded: false,
-        onChange: () => updateData()
-    },
-    albumCoverImage: {
-        type: OptionType.BOOLEAN,
-        description: "Should the album cover image be used as the RPC image? (If Last.fm is selected)",
-        default: true,
-        restartNeeded: false,
-        onChange: () => updateData()
-    },
-    lastFMStatFormat: {
-        type: OptionType.STRING,
-        description: "How should the Last.fm stat be formatted? $album is replaced with the album name, and $artist with the artist name.",
-        default: 'Top album this week: "$album - $artist"',
         restartNeeded: false,
         onChange: () => updateData()
     }
 });
 
-async function setRpc(disable = false, details?: string, imageURL?: string) {
-    if (disable || (!settings.store.lastFMApiKey && settings.store.statDisplay === StatsDisplay.MostListenedAlbum)) {
+async function setRpc(disable = false, details?: string) {
+    if (disable) {
         FluxDispatcher.dispatch({
             type: "LOCAL_ACTIVITY_UPDATE",
             activity: null,
@@ -89,11 +59,9 @@ async function setRpc(disable = false, details?: string, imageURL?: string) {
         return;
     }
 
-    const useAlbumCover = settings.store.albumCoverImage && imageURL;
     const fallbackImage = settings.store.assetURL
         || IconUtils.getUserAvatarURL(UserStore.getCurrentUser(), false, 128)
         || IconUtils.getDefaultAvatarURL(UserStore.getCurrentUser().id);
-    const finalImageKey = useAlbumCover ? imageURL : fallbackImage;
 
     const activity = {
         application_id: "0",
@@ -102,7 +70,7 @@ async function setRpc(disable = false, details?: string, imageURL?: string) {
         type: 0,
         flags: 1,
         assets: {
-            large_image: await getApplicationAsset(finalImageKey)
+            large_image: await getApplicationAsset(fallbackImage)
         }
     };
 
@@ -133,7 +101,6 @@ interface IMessageCreate {
     message: Message;
 }
 
-const Native = VencordNative.pluginHelpers.RPCStats as PluginNative<typeof import("./native")>;
 let intervalId: NodeJS.Timeout;
 let lastCheckedDate: string = getCurrentDate();
 
@@ -153,33 +120,6 @@ async function updateData() {
         case StatsDisplay.MessagesSentAllTime: {
             const messagesAllTime = (await DataStore.get("RPCStatsAllTimeMessages")) ?? 0;
             setRpc(false, `Messages sent all time: ${messagesAllTime}`);
-            break;
-        }
-
-        case StatsDisplay.MostListenedAlbum: {
-            if (!settings.store.lastFMApiKey || !settings.store.lastFMUsername) {
-                setRpc(false, "Last.fm setup incomplete");
-                return;
-            }
-
-            const lastFMDataJson = await Native.fetchTopAlbum({
-                apiKey: settings.store.lastFMApiKey,
-                user: settings.store.lastFMUsername,
-                period: "7day"
-            });
-
-            if (!lastFMDataJson) return;
-
-            try {
-                const lastFMData = JSON.parse(lastFMDataJson);
-                const details = settings.store.lastFMStatFormat
-                    .replace("$album", lastFMData.albumName ?? "Unknown Album")
-                    .replace("$artist", lastFMData.artistName ?? "Unknown Artist");
-
-                setRpc(false, details, lastFMData?.albumCoverUrl);
-            } catch (e) {
-                console.error("[RPCStats] Failed to parse Last.fm JSON data", e);
-            }
             break;
         }
     }
