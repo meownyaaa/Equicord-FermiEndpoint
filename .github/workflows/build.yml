@@ -11,7 +11,7 @@ on:
 env:
     FORCE_COLOR: true
     GITHUB_TOKEN: ${{ secrets.PAT }}
-    REPO: estrogencat/Equibored
+    REPO: meownyaaa/Equibored-FermiEndpoint
     USERNAME: GitHub-Actions
 
 permissions:
