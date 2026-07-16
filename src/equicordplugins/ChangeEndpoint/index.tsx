@@ -110,10 +110,6 @@ export default definePlugin({
             }
         },
         {
-            // Harmony's gateway RESUME opcode handler is a non-functional stub that
-            // always replies Invalid Session, forcing a full re-Identify anyway.
-            // Skip the resume attempt entirely and always Identify on reconnect,
-            // saving a wasted round trip (HELLO -> RESUME -> INVALID_SESSION -> IDENTIFY).
             find: "_doResumeOrIdentify(){",
             replacement: {
                 match: /_doResumeOrIdentify\(\)\{[^}]*?\?this\._doResume\(\):this\._doIdentify\(\)/,
@@ -121,11 +117,6 @@ export default definePlugin({
             }
         },
         {
-            // Real Discord clients send `preferred_regions` (array) alongside
-            // `preferred_region` in VOICE_STATE_UPDATE when joining a voice channel.
-            // Harmony's VoiceStateUpdateSchema doesn't recognise the plural field and
-            // closes the gateway with a 4002 decode error the instant you try to join
-            // voice, which then cascades into a reconnect. Just never attach it.
             find: "c.preferred_region=",
             replacement: {
                 match: /\(c\.preferred_region=(\w+),c\.preferred_regions=\w+\)/,
@@ -133,16 +124,48 @@ export default definePlugin({
             }
         },
         {
-            // Spacebar/Harmony don't probe uploaded attachments for width/height,
-            // so image/video attachments always come back with width:null,height:null.
-            // The media-sizing helpers below then do arithmetic on null, producing
-            // NaN dimensions, so the embed renders at NaN x NaN (invisible).
-            // Fall back to filling the available max box when width/height are missing.
             find: "maxWidth:i,maxHeight:r",
             all: true,
             replacement: {
                 match: /\{width:t,height:n,maxWidth:i,maxHeight:r(?:,minWidth:a=0,minHeight:s=0)?\}=e[^;]*;/g,
                 replace: (match: string) => `${match}null==t&&(t=i,n=r);`
+            }
+        },
+        {
+            find: "originalContentType:e.original_content_type,loadingState:e.loading_state",
+            replacement: {
+                match: /height:e\.height,width:e\.width,/,
+                replace: "height:e.height||360,width:e.width||640,"
+            }
+        },
+        {
+            find: "loadingState:e.loading_state,",
+            replacement: {
+                match: /loadingState:e\.loading_state,/,
+                replace: "loadingState:e.loading_state??2,"
+            }
+        },
+        {
+            find: "].find(e=>E(e).supported())",
+            replacement: {
+                match: /\[(\w+\.\w+\.NATIVE),(\w+\.\w+\.WEBRTC)\]\.find\(e=>\w+\(e\)\.supported\(\)\)/,
+                replace: (match: string, native: string, webrtc: string) =>
+                    match.replace(`[${native},${webrtc}]`, `[${webrtc},${native}]`)
+            }
+        },
+        {
+            find: "\"Microsoft Edge\"===",
+            replacement: {
+                match: /"Chrome"===(\w+)\(\)\.name\|\|"Safari"===\w+\(\)\.name\|\|"Firefox"===\w+\(\)\.name&&(\w+)>=80\|\|"Opera"===\w+\(\)\.name\|\|"Microsoft Edge"===\w+\(\)\.name/,
+                replace: (match: string, fn: string, ver: string) =>
+                    `(${match}||"Electron"===${fn}().name&&${ver}>=1)`
+            }
+        },
+        {
+            find: "get platformAlwaysPermits(){return",
+            replacement: {
+                match: /get platformAlwaysPermits\(\)\{return.*?\.checkPermissionsEnabled\}/,
+                replace: "get platformAlwaysPermits(){return!0}"
             }
         }
     ]
