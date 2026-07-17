@@ -5,17 +5,9 @@ import { Alerts, Button, Toasts } from "@webpack/common";
 
 function clearCachedLoginData() {
     try {
-        // Bare `localStorage`/`sessionStorage` aren't reliably resolvable in this
-        // execution context - go through @utils/localStorage (= window.localStorage)
-        // and window.sessionStorage explicitly instead.
         localStorage.clear();
         window.sessionStorage?.clear();
 
-        // Nuke every IndexedDB database we can see - Discord's client caches
-        // user/token/session state here (including the login token itself,
-        // which is why switching backends without doing this auto-logs-in
-        // with the previous instance's token), and stale entries from a
-        // previous backend are what cause the freeze-on-splash-logo issue.
         if (window.indexedDB?.databases) {
             window.indexedDB.databases().then(dbs => {
                 for (const db of dbs) {
@@ -24,8 +16,6 @@ function clearCachedLoginData() {
             }).catch(e => console.error("[ChangeEndpoint] Failed to enumerate IndexedDB databases", e));
         }
 
-        // Belt-and-suspenders: also clear any non-HttpOnly cookies on this
-        // domain, in case auth state is being persisted there too.
         for (const cookie of document.cookie.split(";")) {
             const name = cookie.split("=")[0]?.trim();
             if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
@@ -88,14 +78,15 @@ export const settings = definePluginSettings({
     },
     customBackendHost: {
         type: OptionType.STRING,
-        description: "Only used with Custom (Simplified). Just the bare host, no scheme, no trailing slash " +
+        description: "You need reading comprehension to do this. " + 
+            "Only used with Custom (Simplified). Just the bare host, no scheme, no trailing slash " +
             "(e.g. \"rory.server.spacebar.chat\"). To find this: open DevTools (Ctrl+Shift+I) on the instance's " +
             "web client, go to the Network tab, log in or reload, and look for a request whose domain starts " +
             "with \"api.\" - e.g. a request to \"api.rory.server.spacebar.chat/api/v9/...\". Everything after " +
             "\"api.\" and before the next \"/\" is the host to put here. This assumes the instance follows the " +
             "standard api.<host> / cdn.<host> / gateway.<host> convention - if it doesn't, or this doesn't work, " +
             "use Custom (Advanced) instead and enter each endpoint separately.",
-        default: "",
+        default: "rory.server.spacebar.chat",
         restartNeeded: true,
         hidden: () => !isSimple()
     },
