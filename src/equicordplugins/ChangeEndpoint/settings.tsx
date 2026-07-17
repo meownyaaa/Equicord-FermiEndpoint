@@ -23,7 +23,7 @@ function clearCachedLoginData() {
 
         Toasts.show({
             id: Toasts.genId(),
-            message: "Cleared cached login data. Fully quit Discord (tray icon, not just the window) and relaunch it now.",
+            message: "Cleared cached login data. Go back to the plugins screen, scroll up and press Restart.",
             type: Toasts.Type.SUCCESS
         });
     } catch (e) {
@@ -44,8 +44,8 @@ function ClearCacheButton() {
                 Alerts.show({
                     title: "Clear cached login data?",
                     body: "This clears localStorage, sessionStorage, and IndexedDB for this client. " +
-                        "You'll need to fully quit Discord (tray icon, not just close the window) and relaunch it " +
-                        "afterward. Do this after switching backends if the client freezes at the Discord logo. Continue?",
+                        "You'll need to restart Discord via Equicord's restart button at the top of this " +
+                        "plugins page. Continue?",
                     confirmText: "Clear data",
                     cancelText: "Cancel",
                     confirmColor: Button.Colors.RED,
