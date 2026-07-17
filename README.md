@@ -53,7 +53,7 @@ npm i -g pnpm
 Clone Equicord:
 
 ```shell
-git clone https://github.com/Equicord/Equicord
+git clone https://github.com/meownyaaa/Equicord-FermiEndpoint
 cd Equicord
 ```
 
