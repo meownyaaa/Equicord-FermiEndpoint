@@ -42,31 +42,11 @@ function schedulePush() {
     debounceTimer = setTimeout(pushGuildOrder, 1500);
 }
 
-async function pushLastChannel(channelId: string, guildId: string | null) {
-    try {
-        await RestAPI.patch({
-            url: "/users/@me/settings",
-            body: {
-                guild_positions_last_channel: { guild_id: guildId, channel_id: channelId }
-            }
-        });
-    } catch (e) {
-        console.error("[ChangeEndpoint] Failed to push last channel", e);
-    }
-}
-
 let lastSignature: string | null = null;
-let lastInteraction = Date.now();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let pollingStarted = false;
 
-const ACTIVE_INTERVAL = 30 * 1000;
-const IDLE_INTERVAL = 30 * 1000;
-const ACTIVE_WINDOW = 2000 * 60 * 1000;
-
-function markInteraction() {
-    lastInteraction = Date.now();
-}
+const POLL_INTERVAL = 45 * 1000;
 
 async function pollSavedGuildOrder() {
     try {
@@ -82,8 +62,7 @@ async function pollSavedGuildOrder() {
     } catch (e) {
         console.error("[ChangeEndpoint] Failed to poll saved guild order", e);
     } finally {
-        const interval = Date.now() - lastInteraction < ACTIVE_WINDOW ? ACTIVE_INTERVAL : IDLE_INTERVAL;
-        pollTimer = setTimeout(pollSavedGuildOrder, interval);
+        pollTimer = setTimeout(pollSavedGuildOrder, POLL_INTERVAL);
     }
 }
 
@@ -109,27 +88,16 @@ export function startGuildOrderSync() {
     if (pollingStarted) return;
     pollingStarted = true;
 
-    window.addEventListener("mousemove", markInteraction);
-    window.addEventListener("keydown", markInteraction);
-    window.addEventListener("mousedown", markInteraction);
-
     pollSavedGuildOrder();
 
     FluxDispatcher.subscribe("GUILD_MOVE_BY_ID", schedulePush);
     FluxDispatcher.subscribe("GUILD_FOLDER_CREATE_LOCAL", schedulePush);
     FluxDispatcher.subscribe("GUILD_FOLDER_EDIT_LOCAL", schedulePush);
     FluxDispatcher.subscribe("GUILD_FOLDER_DELETE_LOCAL", schedulePush);
-    FluxDispatcher.subscribe("CHANNEL_SELECT", (e: any) => {
-        if (e.channelId) pushLastChannel(e.channelId, e.guildId ?? null);
-    });
 }
 
 export function stopGuildOrderSync() {
     pollingStarted = false;
-
-    window.removeEventListener("mousemove", markInteraction);
-    window.removeEventListener("keydown", markInteraction);
-    window.removeEventListener("mousedown", markInteraction);
 
     if (pollTimer) clearTimeout(pollTimer);
 
