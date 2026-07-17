@@ -256,7 +256,7 @@ export default definePlugin({
             find: "gif_provider:i.provider??",
             replacement: {
                 match: /\{gif_provider:(\w+)\.provider\?\?\(0,\w+\.\w+\)\(\),load_id:\w+\.\w+\.getAnalyticsID\(\),source_object:"GIF Picker",gif_url:\1\.url,gif_id:\1\.id\};(\w+)\(\1\.url,void 0,void 0,!0,void 0,\w+\)/,
-                replace: "$2($1.url)"
+                replace: "$2(($1.gifSrc?($1.gifSrc.startsWith('//')?'https:'+$1.gifSrc:$1.gifSrc):$1.url))"
             }
         }
     ]
