@@ -11,14 +11,6 @@ export default definePlugin({
     settings,
 
     start() {
-        // Electron's implementation of the standard Permissions API doesn't
-        // reliably reflect getUserMedia grant state the way real browsers do -
-        // setPermissionRequestHandler (main process) controls whether
-        // getUserMedia() itself succeeds, but navigator.permissions.query()
-        // is a separate, independently-implemented API that can still report
-        // stale/incorrect state. This only matters on desktop (Electron); the
-        // web client already works correctly since real browsers implement
-        // this properly, so only patch it when running inside Electron.
         if (typeof DiscordNative === "undefined") return;
 
         const originalQuery = navigator.permissions.query.bind(navigator.permissions);
