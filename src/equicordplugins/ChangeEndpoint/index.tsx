@@ -1,5 +1,6 @@
 import definePlugin from "@utils/types";
 
+import { startGuildOrderSync, stopGuildOrderSync } from "./guildOrderSync";
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 
@@ -11,6 +12,8 @@ export default definePlugin({
     settings,
 
     start() {
+        startGuildOrderSync();
+
         if (typeof DiscordNative === "undefined") return;
 
         const originalQuery = navigator.permissions.query.bind(navigator.permissions);
@@ -26,6 +29,10 @@ export default definePlugin({
             }
             return originalQuery(descriptor);
         };
+    },
+
+    stop() {
+        stopGuildOrderSync();
     },
 
     patches: [
@@ -236,6 +243,20 @@ export default definePlugin({
             replacement: {
                 match: /didHavePermission\(e\)\{return this\.storage\.hasPermission\(e\)\}/,
                 replace: "didHavePermission(e){return!0}"
+            }
+        },
+        {
+            find: "getCollectiblesItemAssetUrl:i}=n(",
+            replacement: {
+                match: /(let\{CollectiblesItemAssetFormat:\w+,getCollectiblesItemAssetUrl:\w+\}=\w+\(\d+\),\w+=\w+\?\w+\.ANIMATED:\w+\.STATIC,\w+=\w+\(\{skuId:\w+\.skuId,assetFormat:\w+\}\);)if\(null!=\w+\)return \w+\}catch\{return null\}/,
+                replace: "$1}catch{return null}"
+            }
+        },
+        {
+            find: "gif_provider:i.provider??",
+            replacement: {
+                match: /\{gif_provider:(\w+)\.provider\?\?\(0,\w+\.\w+\)\(\),load_id:\w+\.\w+\.getAnalyticsID\(\),source_object:"GIF Picker",gif_url:\1\.url,gif_id:\1\.id\};(\w+)\(\1\.url,void 0,void 0,!0,void 0,\w+\)/,
+                replace: "$2($1.url)"
             }
         }
     ]
