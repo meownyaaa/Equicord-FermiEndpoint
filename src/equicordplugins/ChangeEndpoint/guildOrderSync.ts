@@ -60,9 +60,9 @@ let lastInteraction = Date.now();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let pollingStarted = false;
 
-const ACTIVE_INTERVAL = 10 * 1000;
-const IDLE_INTERVAL = 10 * 60 * 1000;
-const ACTIVE_WINDOW = 2 * 60 * 1000;
+const ACTIVE_INTERVAL = 30 * 1000;
+const IDLE_INTERVAL = 30 * 1000;
+const ACTIVE_WINDOW = 2000 * 60 * 1000;
 
 function markInteraction() {
     lastInteraction = Date.now();
