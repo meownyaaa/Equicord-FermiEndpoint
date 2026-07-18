@@ -198,37 +198,6 @@ function stopVoicePhantomFix() {
     recovering = false;
 }
 
-// logs every outgoing gateway frame's op/d so we can see what precedes
-// a 4002/4009 close without guessing.
-
-function installGatewaySendLogger() {
-    const w = window as any;
-    if (w.__changeEndpointSendLoggerInstalled) return;
-    w.__changeEndpointSendLoggerInstalled = true;
-
-    const OriginalSend = WebSocket.prototype.send;
-    WebSocket.prototype.send = function (this: WebSocket, data: any) {
-        try {
-            if (typeof this.url === "string" && this.url.includes("gateway.")) {
-                if (typeof data === "string") {
-                    const parsed = JSON.parse(data);
-                    console.log(
-                        `[ChangeEndpoint] >> gateway send op=${parsed.op} d=${typeof parsed.d}`,
-                        parsed.d
-                    );
-                } else {
-                    const kind = data?.constructor?.name ?? typeof data;
-                    const size = data?.byteLength ?? data?.size ?? "?";
-                    console.log(`[ChangeEndpoint] >> gateway send BINARY frame (${kind}, ${size} bytes)`);
-                }
-            }
-        } catch (e) {
-            console.log("[ChangeEndpoint] >> gateway send (unparseable string frame)", data, e);
-        }
-        return OriginalSend.call(this, data);
-    };
-}
-
 // forces a fresh gateway reconnect when the tab returns from being
 // backgrounded long enough that a heartbeat ack was likely missed,
 // instead of waiting for Harmony's own 4009 timeout.
