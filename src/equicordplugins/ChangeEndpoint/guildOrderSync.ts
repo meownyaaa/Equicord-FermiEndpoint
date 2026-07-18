@@ -2,6 +2,7 @@ import { FluxDispatcher, RestAPI } from "@webpack/common";
 import { findByPropsLazy, findStore } from "@webpack";
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
+const GuildStore = findByPropsLazy("getGuild", "getGuilds");
 
 interface HarmonyGuildFolder {
     id: string | null;
@@ -56,8 +57,8 @@ async function pollSavedGuildOrder() {
 
         if (folders.length && signature !== lastSignature) {
             console.log("[ChangeEndpoint] Applying updated guild order from server", folders);
-            await applyGuildOrder(folders);
-            lastSignature = signature;
+            const applied = await applyGuildOrder(folders);
+            if (applied) lastSignature = signature;
         }
     } catch (e) {
         console.error("[ChangeEndpoint] Failed to poll saved guild order", e);
@@ -67,6 +68,20 @@ async function pollSavedGuildOrder() {
 }
 
 async function applyGuildOrder(folders: HarmonyGuildFolder[]) {
+    const totalIds = folders.reduce((n, f) => n + f.guild_ids.filter(Boolean).length, 0);
+    const loadedIds = folders.reduce(
+        (n, f) => n + f.guild_ids.filter(id => id && GuildStore.getGuild(id)).length,
+        0
+    );
+
+    // guilds are still trickling in after CONNECTION_OPEN - don't drag guilds
+    // around (or feed unknown ids into SortedGuildStore) until they're actually
+    // present, or we end up writing broken state that fails to serialize later
+    if (loadedIds < totalIds) {
+        console.log(`[ChangeEndpoint] Guilds not fully loaded yet (${loadedIds}/${totalIds}), deferring order apply`);
+        return false;
+    }
+
     let anchor: string | null = null;
 
     for (const folder of folders) {
@@ -82,6 +97,8 @@ async function applyGuildOrder(folders: HarmonyGuildFolder[]) {
 
         anchor = ids[ids.length - 1];
     }
+
+    return true;
 }
 
 export function startGuildOrderSync() {
