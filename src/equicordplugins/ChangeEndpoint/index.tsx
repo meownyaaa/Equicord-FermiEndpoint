@@ -3,6 +3,7 @@ import definePlugin from "@utils/types";
 import { startGuildOrderSync, stopGuildOrderSync } from "./guildOrderSync";
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
+import { startVoicePhantomFix, stopVoicePhantomFix } from "./voicePhantomFix";
 
 export default definePlugin({
     name: "ChangeEndpoint",
@@ -13,6 +14,7 @@ export default definePlugin({
 
     start() {
         startGuildOrderSync();
+        startVoicePhantomFix();
 
         if (typeof DiscordNative === "undefined") return;
 
@@ -33,6 +35,7 @@ export default definePlugin({
 
     stop() {
         stopGuildOrderSync();
+        stopVoicePhantomFix();
     },
 
     patches: [
