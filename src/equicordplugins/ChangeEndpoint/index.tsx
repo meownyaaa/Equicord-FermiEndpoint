@@ -1,9 +1,211 @@
 import definePlugin from "@utils/types";
+import { findByPropsLazy, findStore, findStoreLazy } from "@webpack";
+import { FluxDispatcher, RestAPI } from "@webpack/common";
 
-import { startGuildOrderSync, stopGuildOrderSync } from "./guildOrderSync";
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
-import { startVoicePhantomFix, stopVoicePhantomFix } from "./voicePhantomFix";
+
+// ===== Guild order sync =====================================================
+// Polls Harmony's stored guild_folders and applies them locally, and pushes
+// local re-ordering back up. Guards against feeding not-yet-loaded guild IDs
+// into SortedGuildStore, which produces state that can't be re-serialized to
+// protobuf later (the uint64/WS-4002 crash loop).
+
+const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
+const GuildStore = findByPropsLazy("getGuild", "getGuilds");
+
+interface HarmonyGuildFolder {
+    id: string | null;
+    name: string | null;
+    guild_ids: string[];
+    color: number | null;
+}
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSignature: string | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let pollingStarted = false;
+
+const POLL_INTERVAL = 45 * 1000;
+
+function toHarmonyFolders(): HarmonyGuildFolder[] {
+    const SortedGuildStore = findStore("SortedGuildStore");
+    const folders = SortedGuildStore.getGuildFolders();
+
+    return folders.map((f: any) => ({
+        id: f.folderId ?? null,
+        name: f.folderName ?? null,
+        guild_ids: f.guildIds,
+        color: f.folderColor ?? null
+    }));
+}
+
+async function pushGuildOrder() {
+    try {
+        const guild_folders = toHarmonyFolders();
+        await RestAPI.patch({
+            url: "/users/@me/settings",
+            body: { guild_folders }
+        });
+        lastSignature = JSON.stringify(guild_folders);
+    } catch (e) {
+        console.error("[ChangeEndpoint] Failed to push guild order", e);
+    }
+}
+
+function schedulePush() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(pushGuildOrder, 1500);
+}
+
+async function applyGuildOrder(folders: HarmonyGuildFolder[]) {
+    const totalIds = folders.reduce((n, f) => n + f.guild_ids.filter(Boolean).length, 0);
+    const loadedIds = folders.reduce(
+        (n, f) => n + f.guild_ids.filter(id => id && GuildStore.getGuild(id)).length,
+        0
+    );
+
+    // guilds are still trickling in after CONNECTION_OPEN - don't drag guilds
+    // around (or feed unknown ids into SortedGuildStore) until they're actually
+    // present, or we end up writing broken state that fails to serialize later
+    if (loadedIds < totalIds) {
+        console.log(`[ChangeEndpoint] Guilds not fully loaded yet (${loadedIds}/${totalIds}), deferring order apply`);
+        return false;
+    }
+
+    let anchor: string | null = null;
+
+    for (const folder of folders) {
+        const ids = folder.guild_ids.filter(Boolean);
+        if (!ids.length) continue;
+
+        if (ids.length > 1) {
+            GuildActionCreators.createGuildFolderLocal(ids, folder.name ?? null);
+        } else if (anchor) {
+            GuildActionCreators.moveById(ids[0], anchor, true, false);
+        }
+        // if anchor is null this is the first entry - it's already at the top by default
+
+        anchor = ids[ids.length - 1];
+    }
+
+    return true;
+}
+
+async function pollSavedGuildOrder() {
+    try {
+        const res = await RestAPI.get({ url: "/users/@me/settings" });
+        const folders: HarmonyGuildFolder[] = res?.body?.guild_folders ?? [];
+        const signature = JSON.stringify(folders);
+
+        if (folders.length && signature !== lastSignature) {
+            console.log("[ChangeEndpoint] Applying updated guild order from server", folders);
+            const applied = await applyGuildOrder(folders);
+            if (applied) lastSignature = signature;
+        }
+    } catch (e) {
+        console.error("[ChangeEndpoint] Failed to poll saved guild order", e);
+    } finally {
+        pollTimer = setTimeout(pollSavedGuildOrder, POLL_INTERVAL);
+    }
+}
+
+function startGuildOrderSync() {
+    if (pollingStarted) return;
+    pollingStarted = true;
+
+    pollSavedGuildOrder();
+
+    FluxDispatcher.subscribe("GUILD_MOVE_BY_ID", schedulePush);
+    FluxDispatcher.subscribe("GUILD_FOLDER_CREATE_LOCAL", schedulePush);
+    FluxDispatcher.subscribe("GUILD_FOLDER_EDIT_LOCAL", schedulePush);
+    FluxDispatcher.subscribe("GUILD_FOLDER_DELETE_LOCAL", schedulePush);
+}
+
+function stopGuildOrderSync() {
+    pollingStarted = false;
+
+    if (pollTimer) clearTimeout(pollTimer);
+
+    FluxDispatcher.unsubscribe("GUILD_MOVE_BY_ID", schedulePush);
+    FluxDispatcher.unsubscribe("GUILD_FOLDER_CREATE_LOCAL", schedulePush);
+    FluxDispatcher.unsubscribe("GUILD_FOLDER_EDIT_LOCAL", schedulePush);
+    FluxDispatcher.unsubscribe("GUILD_FOLDER_DELETE_LOCAL", schedulePush);
+    if (debounceTimer) clearTimeout(debounceTimer);
+}
+
+const VoiceActions = findByPropsLazy("selectVoiceChannel");
+const RTCConnectionStore = findStoreLazy("RTCConnectionStore");
+const VoiceStateStore = findStoreLazy("VoiceStateStore");
+const UserStore = findStoreLazy("UserStore");
+
+const DEAD_STATES = new Set(["DISCONNECTED", "RTC_DISCONNECTED", "NO_ROUTE"]);
+const GRACE_MS = 5000;
+const REJOIN_DELAY_MS = 1000;
+
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
+let recovering = false;
+
+function isPhantomVoiceState(): { channelId: string; } | null {
+    const me = UserStore.getCurrentUser();
+    if (!me) return null;
+
+    // What the client's local voice-state cache (fed by gateway dispatches)
+    // believes about us right now.
+    const myVoiceState = VoiceStateStore.getVoiceStateForUser(me.id);
+    if (!myVoiceState?.channelId) return null; // client doesn't think we're in a channel - nothing to do
+
+    // What the actual underlying media/RTC connection is doing, independent
+    // of the gateway-dispatched voice state above.
+    const rtcState: string = RTCConnectionStore.getState();
+    const rtcConnected: boolean = RTCConnectionStore.isConnected();
+
+    if (!rtcConnected && DEAD_STATES.has(rtcState)) {
+        return { channelId: myVoiceState.channelId };
+    }
+    return null;
+}
+
+function attemptVoiceRecovery() {
+    if (recovering) return;
+    const phantom = isPhantomVoiceState();
+    if (!phantom) return;
+
+    recovering = true;
+    const { channelId } = phantom;
+    console.log(
+        `[ChangeEndpoint] Voice state looks phantom (client thinks it's in ${channelId}, ` +
+        `RTC state is ${RTCConnectionStore.getState()}) - forcing a real rejoin`
+    );
+
+    // Force a real leave first (clears the client's local "I'm connected"
+    // belief), then rejoin the same channel a moment later so it actually
+    // goes through the connect flow instead of no-op'ing.
+    VoiceActions.selectVoiceChannel(null);
+    setTimeout(() => {
+        VoiceActions.selectVoiceChannel(channelId);
+        recovering = false;
+    }, REJOIN_DELAY_MS);
+}
+
+function onVoicePhantomCheckTrigger() {
+    if (graceTimer) clearTimeout(graceTimer);
+    graceTimer = setTimeout(attemptVoiceRecovery, GRACE_MS);
+}
+
+function startVoicePhantomFix() {
+    FluxDispatcher.subscribe("CONNECTION_OPEN", onVoicePhantomCheckTrigger);
+    FluxDispatcher.subscribe("VOICE_CONNECTION_STATUS", onVoicePhantomCheckTrigger);
+}
+
+function stopVoicePhantomFix() {
+    FluxDispatcher.unsubscribe("CONNECTION_OPEN", onVoicePhantomCheckTrigger);
+    FluxDispatcher.unsubscribe("VOICE_CONNECTION_STATUS", onVoicePhantomCheckTrigger);
+    if (graceTimer) clearTimeout(graceTimer);
+    recovering = false;
+}
+
+// ===== Plugin ================================================================
 
 export default definePlugin({
     name: "ChangeEndpoint",
