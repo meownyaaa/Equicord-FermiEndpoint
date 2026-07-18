@@ -254,7 +254,6 @@ export default definePlugin({
     settings,
 
     start() {
-        installGatewaySendLogger();
         startGuildOrderSync();
         startVoicePhantomFix();
         startHeartbeatWatchdog();
