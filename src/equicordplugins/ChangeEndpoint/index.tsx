@@ -5,6 +5,9 @@ import { FluxDispatcher, RestAPI } from "@webpack/common";
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 
+// polls backend's guild_folders, applies them locally, pushes local
+// reordering back. Guards against writing not-yet-loaded guild IDs
+
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const GuildStore = findByPropsLazy("getGuild", "getGuilds");
 
@@ -59,9 +62,7 @@ async function applyGuildOrder(folders: HarmonyGuildFolder[]) {
         0
     );
 
-    // guilds are still trickling in after CONNECTION_OPEN - don't drag guilds
-    // around (or feed unknown ids into SortedGuildStore) until they're actually
-    // present, or we end up writing broken state that fails to serialize later
+    // don't reorder until every guild id is actually loaded
     if (loadedIds < totalIds) {
         console.log(`[ChangeEndpoint] Guilds not fully loaded yet (${loadedIds}/${totalIds}), deferring order apply`);
         return false;
@@ -78,7 +79,6 @@ async function applyGuildOrder(folders: HarmonyGuildFolder[]) {
         } else if (anchor) {
             GuildActionCreators.moveById(ids[0], anchor, true, false);
         }
-        // if anchor is null this is the first entry - it's already at the top by default
 
         anchor = ids[ids.length - 1];
     }
@@ -128,14 +128,20 @@ function stopGuildOrderSync() {
     if (debounceTimer) clearTimeout(debounceTimer);
 }
 
+// after a forced reconnect, VoiceStateStore can still claim we're in a
+// channel while RTC is actually dead. cross-check against RTCConnectionStore
+// and force a real leave+rejoin when they disagree.
+
 const VoiceActions = findByPropsLazy("selectVoiceChannel");
 const RTCConnectionStore = findStoreLazy("RTCConnectionStore");
 const VoiceStateStore = findStoreLazy("VoiceStateStore");
 const UserStore = findStoreLazy("UserStore");
 
+// excludes transient states like CONNECTING/ICE_CHECKING/AUTHENTICATING.
 const DEAD_STATES = new Set(["DISCONNECTED", "RTC_DISCONNECTED", "NO_ROUTE"]);
+
 const GRACE_MS = 5000;
-const REJOIN_DELAY_MS = 1000;
+const REJOIN_DELAY_MS = 1000; // selectVoiceChannel no-ops if called with the current channel
 
 let graceTimer: ReturnType<typeof setTimeout> | null = null;
 let recovering = false;
@@ -145,7 +151,7 @@ function isPhantomVoiceState(): { channelId: string; } | null {
     if (!me) return null;
 
     const myVoiceState = VoiceStateStore.getVoiceStateForUser(me.id);
-    if (!myVoiceState?.channelId) return null; // client doesn't think we're in a channel - nothing to do
+    if (!myVoiceState?.channelId) return null;
 
     const rtcState: string = RTCConnectionStore.getState();
     const rtcConnected: boolean = RTCConnectionStore.isConnected();
@@ -192,13 +198,8 @@ function stopVoicePhantomFix() {
     recovering = false;
 }
 
-// ===== Gateway outgoing-frame logger ========================================
-// Harmony closes with 4002 (Decode_error) whenever an incoming frame fails
-// its PayloadSchema check (op: Number, d: Object|Number only) - but the
-// actual validation error is only console.error'd on Harmony's own server
-// process, never sent back to the client. This logs every outgoing gateway
-// frame's op/d shape client-side so the culprit is visible in the browser
-// console immediately preceding the next 4002, instead of having to guess.
+// logs every outgoing gateway frame's op/d so we can see what precedes
+// a 4002/4009 close without guessing.
 
 function installGatewaySendLogger() {
     const w = window as any;
@@ -208,18 +209,70 @@ function installGatewaySendLogger() {
     const OriginalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (this: WebSocket, data: any) {
         try {
-            if (typeof this.url === "string" && this.url.includes("gateway.") && typeof data === "string") {
-                const parsed = JSON.parse(data);
-                console.log(
-                    `[ChangeEndpoint] >> gateway send op=${parsed.op} d=${typeof parsed.d}`,
-                    parsed.d
-                );
+            if (typeof this.url === "string" && this.url.includes("gateway.")) {
+                if (typeof data === "string") {
+                    const parsed = JSON.parse(data);
+                    console.log(
+                        `[ChangeEndpoint] >> gateway send op=${parsed.op} d=${typeof parsed.d}`,
+                        parsed.d
+                    );
+                } else {
+                    const kind = data?.constructor?.name ?? typeof data;
+                    const size = data?.byteLength ?? data?.size ?? "?";
+                    console.log(`[ChangeEndpoint] >> gateway send BINARY frame (${kind}, ${size} bytes)`);
+                }
             }
-        } catch {
-            // not JSON (e.g. binary/etf frame) - nothing to log
+        } catch (e) {
+            console.log("[ChangeEndpoint] >> gateway send (unparseable string frame)", data, e);
         }
         return OriginalSend.call(this, data);
     };
+}
+
+// forces a fresh gateway reconnect when the tab returns from being
+// backgrounded long enough that a heartbeat ack was likely missed,
+// instead of waiting for Harmony's own 4009 timeout.
+
+let gatewaySocket: WebSocket | null = null;
+let hiddenSince: number | null = null;
+const HIDDEN_RECONNECT_THRESHOLD_MS = 30_000;
+
+function installGatewaySocketCapture() {
+    const w = window as any;
+    if (w.__changeEndpointSocketCaptureInstalled) return;
+    w.__changeEndpointSocketCaptureInstalled = true;
+
+    const OriginalWebSocket = window.WebSocket;
+    function PatchedWebSocket(this: any, url: string | URL, protocols?: string | string[]) {
+        const ws = new OriginalWebSocket(url, protocols as any);
+        if (typeof url === "string" && url.includes("gateway.")) gatewaySocket = ws;
+        return ws;
+    }
+    PatchedWebSocket.prototype = OriginalWebSocket.prototype;
+    Object.setPrototypeOf(PatchedWebSocket, OriginalWebSocket);
+    window.WebSocket = PatchedWebSocket as any;
+}
+
+function onVisibilityChange() {
+    if (document.hidden) {
+        hiddenSince = Date.now();
+        return;
+    }
+    if (hiddenSince && Date.now() - hiddenSince > HIDDEN_RECONNECT_THRESHOLD_MS) {
+        console.log("[ChangeEndpoint] Tab backgrounded - forcing reconnect ahead of a possible heartbeat timeout");
+        gatewaySocket?.close(4000, "ChangeEndpoint proactive reconnect");
+    }
+    hiddenSince = null;
+}
+
+function startHeartbeatWatchdog() {
+    installGatewaySocketCapture();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+}
+
+function stopHeartbeatWatchdog() {
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    hiddenSince = null;
 }
 
 
@@ -235,6 +288,7 @@ export default definePlugin({
         installGatewaySendLogger();
         startGuildOrderSync();
         startVoicePhantomFix();
+        startHeartbeatWatchdog();
 
         if (typeof DiscordNative === "undefined") return;
 
@@ -256,6 +310,7 @@ export default definePlugin({
     stop() {
         stopGuildOrderSync();
         stopVoicePhantomFix();
+        stopHeartbeatWatchdog();
     },
 
     patches: [
