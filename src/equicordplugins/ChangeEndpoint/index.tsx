@@ -5,12 +5,6 @@ import { FluxDispatcher, RestAPI } from "@webpack/common";
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 
-// ===== Guild order sync =====================================================
-// Polls Harmony's stored guild_folders and applies them locally, and pushes
-// local re-ordering back up. Guards against feeding not-yet-loaded guild IDs
-// into SortedGuildStore, which produces state that can't be re-serialized to
-// protobuf later (the uint64/WS-4002 crash loop).
-
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const GuildStore = findByPropsLazy("getGuild", "getGuilds");
 
@@ -150,13 +144,9 @@ function isPhantomVoiceState(): { channelId: string; } | null {
     const me = UserStore.getCurrentUser();
     if (!me) return null;
 
-    // What the client's local voice-state cache (fed by gateway dispatches)
-    // believes about us right now.
     const myVoiceState = VoiceStateStore.getVoiceStateForUser(me.id);
     if (!myVoiceState?.channelId) return null; // client doesn't think we're in a channel - nothing to do
 
-    // What the actual underlying media/RTC connection is doing, independent
-    // of the gateway-dispatched voice state above.
     const rtcState: string = RTCConnectionStore.getState();
     const rtcConnected: boolean = RTCConnectionStore.isConnected();
 
@@ -178,9 +168,6 @@ function attemptVoiceRecovery() {
         `RTC state is ${RTCConnectionStore.getState()}) - forcing a real rejoin`
     );
 
-    // Force a real leave first (clears the client's local "I'm connected"
-    // belief), then rejoin the same channel a moment later so it actually
-    // goes through the connect flow instead of no-op'ing.
     VoiceActions.selectVoiceChannel(null);
     setTimeout(() => {
         VoiceActions.selectVoiceChannel(channelId);
@@ -205,7 +192,37 @@ function stopVoicePhantomFix() {
     recovering = false;
 }
 
-// ===== Plugin ================================================================
+// ===== Gateway outgoing-frame logger ========================================
+// Harmony closes with 4002 (Decode_error) whenever an incoming frame fails
+// its PayloadSchema check (op: Number, d: Object|Number only) - but the
+// actual validation error is only console.error'd on Harmony's own server
+// process, never sent back to the client. This logs every outgoing gateway
+// frame's op/d shape client-side so the culprit is visible in the browser
+// console immediately preceding the next 4002, instead of having to guess.
+
+function installGatewaySendLogger() {
+    const w = window as any;
+    if (w.__changeEndpointSendLoggerInstalled) return;
+    w.__changeEndpointSendLoggerInstalled = true;
+
+    const OriginalSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (this: WebSocket, data: any) {
+        try {
+            if (typeof this.url === "string" && this.url.includes("gateway.") && typeof data === "string") {
+                const parsed = JSON.parse(data);
+                console.log(
+                    `[ChangeEndpoint] >> gateway send op=${parsed.op} d=${typeof parsed.d}`,
+                    parsed.d
+                );
+            }
+        } catch {
+            // not JSON (e.g. binary/etf frame) - nothing to log
+        }
+        return OriginalSend.call(this, data);
+    };
+}
+
+
 
 export default definePlugin({
     name: "ChangeEndpoint",
@@ -215,6 +232,7 @@ export default definePlugin({
     settings,
 
     start() {
+        installGatewaySendLogger();
         startGuildOrderSync();
         startVoicePhantomFix();
 
