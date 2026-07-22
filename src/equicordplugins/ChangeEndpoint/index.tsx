@@ -198,6 +198,84 @@ function stopVoicePhantomFix() {
     recovering = false;
 }
 
+// Harmony/Fermo only populate DM unread state once, from the initial
+// READY payload - after that it's 100% dependent on MESSAGE_CREATE
+// gateway events arriving for private channels. If one gets dropped
+// (flaky gateway dispatch for DMs), that unread/ping never appears
+// until a full refresh. Poll the DM channel list over REST every 90
+// seconds and replay any message the client hasn't seen through the
+// normal MESSAGE_CREATE flow, so ReadState/badges/notifications get
+// recomputed the same way they would from a live gateway event.
+// Skips whatever channel is currently focused, since that one already
+// gets its unread/notification state kept in sync live.
+
+const ChannelStore = findStoreLazy("ChannelStore");
+const MessageStore = findStoreLazy("MessageStore");
+const SelectedChannelStore = findStoreLazy("SelectedChannelStore");
+
+const DM_CHANNEL_TYPE = 1;
+const GROUP_DM_CHANNEL_TYPE = 3;
+const DM_POLL_INTERVAL = 90 * 1000;
+
+let dmPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function checkChannelForMissedMessage(channel: { id: string; last_message_id: string | null; type: number; }) {
+    if (channel.type !== DM_CHANNEL_TYPE && channel.type !== GROUP_DM_CHANNEL_TYPE) return;
+    if (!channel.last_message_id) return;
+
+    // notifications/unreads already work fine for whatever DM is
+    // currently focused (it gets marked read/ack'd live) - only
+    // channels the user isn't looking at need this workaround
+    if (SelectedChannelStore.getChannelId() === channel.id && document.hasFocus()) return;
+
+    const localChannel = ChannelStore.getChannel(channel.id);
+    if (localChannel?.lastMessageId === channel.last_message_id) return;
+    if (MessageStore.getMessage(channel.id, channel.last_message_id)) return;
+
+    try {
+        const res = await RestAPI.get({
+            url: `/channels/${channel.id}/messages`,
+            query: { limit: 1 }
+        });
+        const message = res?.body?.[0];
+        if (!message) return;
+
+        console.log(`[ChangeEndpoint] Replaying missed message in DM ${channel.id} that the gateway never delivered`);
+
+        FluxDispatcher.dispatch({
+            type: "MESSAGE_CREATE",
+            channelId: channel.id,
+            message,
+            optimistic: false,
+            isPushNotification: false
+        } as any);
+    } catch (e) {
+        console.error(`[ChangeEndpoint] Failed to fetch latest message for channel ${channel.id}`, e);
+    }
+}
+
+async function pollDMUnreads() {
+    try {
+        const res = await RestAPI.get({ url: "/users/@me/channels" });
+        const channels: Array<{ id: string; last_message_id: string | null; type: number; }> = res?.body ?? [];
+        await Promise.all(channels.map(checkChannelForMissedMessage));
+    } catch (e) {
+        console.error("[ChangeEndpoint] Failed to poll DM unreads", e);
+    } finally {
+        dmPollTimer = setTimeout(pollDMUnreads, DM_POLL_INTERVAL);
+    }
+}
+
+function startDMUnreadPoll() {
+    if (dmPollTimer) return;
+    pollDMUnreads();
+}
+
+function stopDMUnreadPoll() {
+    if (dmPollTimer) clearTimeout(dmPollTimer);
+    dmPollTimer = null;
+}
+
 // forces a fresh gateway reconnect when the tab returns from being
 // backgrounded long enough that a heartbeat ack was likely missed,
 // instead of waiting for Harmony's own 4009 timeout.
@@ -257,6 +335,7 @@ export default definePlugin({
         startGuildOrderSync();
         startVoicePhantomFix();
         startHeartbeatWatchdog();
+        startDMUnreadPoll();
 
         if (typeof DiscordNative === "undefined") return;
 
@@ -279,6 +358,7 @@ export default definePlugin({
         stopGuildOrderSync();
         stopVoicePhantomFix();
         stopHeartbeatWatchdog();
+        stopDMUnreadPoll();
     },
 
     patches: [
