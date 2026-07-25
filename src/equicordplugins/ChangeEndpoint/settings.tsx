@@ -3,29 +3,21 @@ import { OptionType } from "@utils/types";
 import { localStorage } from "@utils/localStorage";
 import { Alerts, Button, Toasts } from "@webpack/common";
 
+// bare localStorage/sessionStorage aren't reliably resolvable here - go
+// through @utils/localStorage (= window.localStorage) and window.sessionStorage
 function clearCachedLoginData() {
     try {
-        // Bare `localStorage`/`sessionStorage` aren't reliably resolvable in this
-        // execution context - go through @utils/localStorage (= window.localStorage)
-        // and window.sessionStorage explicitly instead.
         localStorage.clear();
         window.sessionStorage?.clear();
 
-        // Nuke every IndexedDB database we can see - Discord's client caches
-        // user/token/session state here (including the login token itself,
-        // which is why switching backends without doing this auto-logs-in
-        // with the previous instance's token), and stale entries from a
-        // previous backend are what cause the freeze-on-splash-logo issue.
-        if (window.indexedDB?.databases) {
-            window.indexedDB.databases().then(dbs => {
-                for (const db of dbs) {
-                    if (db.name) indexedDB.deleteDatabase(db.name);
-                }
-            }).catch(e => console.error("[ChangeEndpoint] Failed to enumerate IndexedDB databases", e));
-        }
+        // IndexedDB holds Discord's cached user/token/session state (including
+        // the login token), which is why switching backends without this
+        // auto-logs-in with the previous instance's token and freezes at splash
+        window.indexedDB?.databases?.()
+            .then(dbs => dbs.forEach(db => db.name && indexedDB.deleteDatabase(db.name)))
+            .catch(e => console.error("[ChangeEndpoint] Failed to enumerate IndexedDB databases", e));
 
-        // Belt-and-suspenders: also clear any non-HttpOnly cookies on this
-        // domain, in case auth state is being persisted there too.
+        // belt-and-suspenders: also clear any non-HttpOnly cookies on this domain
         for (const cookie of document.cookie.split(";")) {
             const name = cookie.split("=")[0]?.trim();
             if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
@@ -46,34 +38,26 @@ function clearCachedLoginData() {
     }
 }
 
-function ClearCacheButton() {
-    return (
-        <Button
-            color={Button.Colors.RED}
-            onClick={() => {
-                Alerts.show({
-                    title: "Clear cached login data?",
-                    body: "This clears localStorage, sessionStorage, and IndexedDB for this client. " +
-                        "You'll need to fully quit Discord (tray icon, not just close the window) and relaunch it " +
-                        "afterward. Do this after switching backends if the client freezes at the Discord logo. Continue?",
-                    confirmText: "Clear data",
-                    cancelText: "Cancel",
-                    confirmColor: Button.Colors.RED,
-                    onConfirm: clearCachedLoginData
-                });
-            }}
-        >
-            Clear Cached Login Data
-        </Button>
-    );
-}
+const ClearCacheButton = () => (
+    <Button
+        color={Button.Colors.RED}
+        onClick={() => Alerts.show({
+            title: "Clear cached login data?",
+            body: "This clears localStorage, sessionStorage, and IndexedDB for this client. " +
+                "You'll need to fully quit Discord (tray icon, not just close the window) and relaunch it " +
+                "afterward. Do this after switching backends if the client freezes at the Discord logo. Continue?",
+            confirmText: "Clear data",
+            cancelText: "Cancel",
+            confirmColor: Button.Colors.RED,
+            onConfirm: clearCachedLoginData
+        })}
+    >
+        Clear Cached Login Data
+    </Button>
+);
 
-function isSimple() {
-    return settings.store.backend === "custom-simple";
-}
-function isAdvanced() {
-    return settings.store.backend === "custom-advanced";
-}
+const isSimple = () => settings.store.backend === "custom-simple";
+const isAdvanced = () => settings.store.backend === "custom-advanced";
 
 export const settings = definePluginSettings({
     backend: {

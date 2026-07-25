@@ -104,28 +104,22 @@ async function pollSavedGuildOrder() {
     }
 }
 
+const GUILD_ORDER_EVENTS = ["GUILD_MOVE_BY_ID", "GUILD_FOLDER_CREATE_LOCAL", "GUILD_FOLDER_EDIT_LOCAL", "GUILD_FOLDER_DELETE_LOCAL"];
+
 function startGuildOrderSync() {
     if (pollingStarted) return;
     pollingStarted = true;
 
     pollSavedGuildOrder();
-
-    FluxDispatcher.subscribe("GUILD_MOVE_BY_ID", schedulePush);
-    FluxDispatcher.subscribe("GUILD_FOLDER_CREATE_LOCAL", schedulePush);
-    FluxDispatcher.subscribe("GUILD_FOLDER_EDIT_LOCAL", schedulePush);
-    FluxDispatcher.subscribe("GUILD_FOLDER_DELETE_LOCAL", schedulePush);
+    GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.subscribe(e, schedulePush));
 }
 
 function stopGuildOrderSync() {
     pollingStarted = false;
 
     if (pollTimer) clearTimeout(pollTimer);
-
-    FluxDispatcher.unsubscribe("GUILD_MOVE_BY_ID", schedulePush);
-    FluxDispatcher.unsubscribe("GUILD_FOLDER_CREATE_LOCAL", schedulePush);
-    FluxDispatcher.unsubscribe("GUILD_FOLDER_EDIT_LOCAL", schedulePush);
-    FluxDispatcher.unsubscribe("GUILD_FOLDER_DELETE_LOCAL", schedulePush);
     if (debounceTimer) clearTimeout(debounceTimer);
+    GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, schedulePush));
 }
 
 // after a forced reconnect, VoiceStateStore can still claim we're in a
@@ -186,14 +180,14 @@ function onVoicePhantomCheckTrigger() {
     graceTimer = setTimeout(attemptVoiceRecovery, GRACE_MS);
 }
 
+const VOICE_PHANTOM_EVENTS = ["CONNECTION_OPEN", "VOICE_CONNECTION_STATUS"];
+
 function startVoicePhantomFix() {
-    FluxDispatcher.subscribe("CONNECTION_OPEN", onVoicePhantomCheckTrigger);
-    FluxDispatcher.subscribe("VOICE_CONNECTION_STATUS", onVoicePhantomCheckTrigger);
+    VOICE_PHANTOM_EVENTS.forEach(e => FluxDispatcher.subscribe(e, onVoicePhantomCheckTrigger));
 }
 
 function stopVoicePhantomFix() {
-    FluxDispatcher.unsubscribe("CONNECTION_OPEN", onVoicePhantomCheckTrigger);
-    FluxDispatcher.unsubscribe("VOICE_CONNECTION_STATUS", onVoicePhantomCheckTrigger);
+    VOICE_PHANTOM_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, onVoicePhantomCheckTrigger));
     if (graceTimer) clearTimeout(graceTimer);
     recovering = false;
 }
@@ -266,12 +260,20 @@ async function pollDMUnreads() {
     }
 }
 
-function startDMUnreadPoll() {
+// starting this straight from start() fires before the gateway/REST client
+// is actually up (required plugins boot very early), so the first request
+// silently fails - wait for a real connection instead
+function onDMPollConnectionOpen() {
     if (dmPollTimer) return;
     pollDMUnreads();
 }
 
+function startDMUnreadPoll() {
+    FluxDispatcher.subscribe("CONNECTION_OPEN", onDMPollConnectionOpen);
+}
+
 function stopDMUnreadPoll() {
+    FluxDispatcher.unsubscribe("CONNECTION_OPEN", onDMPollConnectionOpen);
     if (dmPollTimer) clearTimeout(dmPollTimer);
     dmPollTimer = null;
 }
@@ -321,8 +323,6 @@ function stopHeartbeatWatchdog() {
     document.removeEventListener("visibilitychange", onVisibilityChange);
     hiddenSince = null;
 }
-
-
 
 export default definePlugin({
     name: "ChangeEndpoint",

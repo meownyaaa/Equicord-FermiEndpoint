@@ -5,12 +5,8 @@ const HARMONY_CDN_HOST = "cdn.harmony.melodychat.org";
 const HARMONY_GATEWAY_ENDPOINT = "wss://gateway.harmony.melodychat.org";
 const HARMONY_MEDIA_PROXY_ENDPOINT = "//cdn.harmony.melodychat.org";
 
-function isSimple(): boolean {
-    return settings.store.backend === "custom-simple";
-}
-function isAdvanced(): boolean {
-    return settings.store.backend === "custom-advanced";
-}
+const isSimple = () => settings.store.backend === "custom-simple";
+const isAdvanced = () => settings.store.backend === "custom-advanced";
 
 function getSimpleHost(): string {
     return settings.store.customBackendHost
@@ -19,26 +15,22 @@ function getSimpleHost(): string {
         .replace(/\/+$/, "");
 }
 
-export function getApiEndpoint(): string {
-    if (isAdvanced() && settings.store.customApiEndpoint) return settings.store.customApiEndpoint.trim();
-    if (isSimple() && settings.store.customBackendHost) return `//api.${getSimpleHost()}/api`;
-    return HARMONY_API_ENDPOINT;
+// shared shape behind all four endpoint getters below: advanced override,
+// then simple-host derivation, then the harmony default
+function resolveEndpoint(advancedValue: string, simpleValue: () => string, fallback: string): string {
+    if (isAdvanced() && advancedValue) return advancedValue.trim();
+    if (isSimple() && settings.store.customBackendHost) return simpleValue();
+    return fallback;
 }
 
-export function getCdnHost(): string {
-    if (isAdvanced() && settings.store.customCdnHost) return settings.store.customCdnHost.trim();
-    if (isSimple() && settings.store.customBackendHost) return `cdn.${getSimpleHost()}`;
-    return HARMONY_CDN_HOST;
-}
+export const getApiEndpoint = () =>
+    resolveEndpoint(settings.store.customApiEndpoint, () => `//api.${getSimpleHost()}/api`, HARMONY_API_ENDPOINT);
 
-export function getGatewayEndpoint(): string {
-    if (isAdvanced() && settings.store.customGatewayEndpoint) return settings.store.customGatewayEndpoint.trim();
-    if (isSimple() && settings.store.customBackendHost) return `wss://gateway.${getSimpleHost()}`;
-    return HARMONY_GATEWAY_ENDPOINT;
-}
+export const getCdnHost = () =>
+    resolveEndpoint(settings.store.customCdnHost, () => `cdn.${getSimpleHost()}`, HARMONY_CDN_HOST);
 
-export function getMediaProxyEndpoint(): string {
-    if (isAdvanced() && settings.store.customMediaProxyEndpoint) return settings.store.customMediaProxyEndpoint.trim();
-    if (isSimple() && settings.store.customBackendHost) return `//cdn.${getSimpleHost()}`;
-    return HARMONY_MEDIA_PROXY_ENDPOINT;
-}
+export const getGatewayEndpoint = () =>
+    resolveEndpoint(settings.store.customGatewayEndpoint, () => `wss://gateway.${getSimpleHost()}`, HARMONY_GATEWAY_ENDPOINT);
+
+export const getMediaProxyEndpoint = () =>
+    resolveEndpoint(settings.store.customMediaProxyEndpoint, () => `//cdn.${getSimpleHost()}`, HARMONY_MEDIA_PROXY_ENDPOINT);
