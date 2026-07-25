@@ -280,7 +280,8 @@ function stopDMUnreadPoll() {
 
 // forces a fresh gateway reconnect when the tab returns from being
 // backgrounded long enough that a heartbeat ack was likely missed,
-// instead of waiting for Harmony's own 4009 timeout.
+// instead of waiting for Harmony's own 4009 timeout. most likely
+// un-needed, but i haven't seen a 4009 since.. soooooo
 
 let gatewaySocket: WebSocket | null = null;
 let hiddenSince: number | null = null;
@@ -583,6 +584,13 @@ export default definePlugin({
             replacement: {
                 match: /\{gif_provider:(\w+)\.provider\?\?\(0,\w+\.\w+\)\(\),load_id:\w+\.\w+\.getAnalyticsID\(\),source_object:"GIF Picker",gif_url:\1\.url,gif_id:\1\.id\};(\w+)\(\1\.url,void 0,void 0,!0,void 0,\w+\)/,
                 replace: "$2(($1.gifSrc?($1.gifSrc.startsWith('//')?'https:'+$1.gifSrc:$1.gifSrc):$1.url))"
+            }
+        }
+        {
+            find: "return\"https:\"+window.GLOBAL_ENV.API_ENDPOINT+(e?",
+            replacement: {
+                match: /function (\w+)\(\)\{let (\w+)=!\(arguments\.length>0\)\|\|void 0===arguments\[0\]\|\|arguments\[0\];return"https:"\+window\.GLOBAL_ENV\.API_ENDPOINT\+\(\2\?`\/v\$\{window\.GLOBAL_ENV\.API_VERSION\}`:""\)\}/,
+                replace: 'function $1(){return"https:"+window.GLOBAL_ENV.API_ENDPOINT+`/v${window.GLOBAL_ENV.API_VERSION}`}'
             }
         }
     ]
