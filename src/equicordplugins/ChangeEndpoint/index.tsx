@@ -461,13 +461,6 @@ export default definePlugin({
             }
         },
         {
-            find: "_doResumeOrIdentify(){",
-            replacement: {
-                match: /_doResumeOrIdentify\(\)\{[^}]*?\?this\._doResume\(\):this\._doIdentify\(\)/,
-                replace: "_doResumeOrIdentify(){this._doIdentify()"
-            }
-        },
-        {
             find: "c.preferred_region=",
             replacement: {
                 match: /\(c\.preferred_region=(\w+),c\.preferred_regions=\w+\)/,
