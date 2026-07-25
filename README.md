@@ -1,3 +1,6 @@
+# I AM NOT RESPONSIBLE FOR ANY ACCOUNT BANS USING THIS PLUGIN, YOU'D HAVE TO PURPOSEFULLY SET THE BACKEND TO DISCORDS TO GET ONE ANYWAY!
+
+
 # [<img src="./browser/icon.png" width="40" align="left" alt="Equicord">](https://github.com/Equicord/Equicord) Equicord
 
 [![Equibop](https://img.shields.io/badge/Equibop-grey?style=flat)](https://github.com/Equicord/Equibop)
