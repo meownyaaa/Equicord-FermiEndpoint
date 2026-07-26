@@ -37,9 +37,17 @@ function toHarmonyFolders(): HarmonyGuildFolder[] {
     }));
 }
 
+// discord's local proto settings cache writes folder id as a uint64 field.
+// echoing an explicit `null` back through the rest round-trip breaks that
+// write (seen as "string is no integer" in the console) - strip null ids
+// from the outgoing payload instead of sending them as null.
+function stripNullIds(folders: HarmonyGuildFolder[]) {
+    return folders.map(({ id, ...rest }) => (id == null ? rest : { id, ...rest }));
+}
+
 async function pushGuildOrder() {
     try {
-        const guild_folders = toHarmonyFolders();
+        const guild_folders = stripNullIds(toHarmonyFolders());
         await RestAPI.patch({
             url: "/users/@me/settings",
             body: { guild_folders }
@@ -300,18 +308,6 @@ function installGatewaySocketCapture() {
     PatchedWebSocket.prototype = OriginalWebSocket.prototype;
     Object.setPrototypeOf(PatchedWebSocket, OriginalWebSocket);
     window.WebSocket = PatchedWebSocket as any;
-}
-
-function onVisibilityChange() {
-    if (document.hidden) {
-        hiddenSince = Date.now();
-        return;
-    }
-    if (hiddenSince && Date.now() - hiddenSince > HIDDEN_RECONNECT_THRESHOLD_MS) {
-        console.log("[ChangeEndpoint] Tab backgrounded - forcing reconnect ahead of a possible heartbeat timeout");
-        gatewaySocket?.close(4000, "ChangeEndpoint proactive reconnect");
-    }
-    hiddenSince = null;
 }
 
 function startHeartbeatWatchdog() {
