@@ -326,7 +326,6 @@ export default definePlugin({
     stop() {
         stopGuildOrderSync();
         stopVoicePhantomFix();
-        stopHeartbeatWatchdog();
         stopDMUnreadPoll();
     },
 
