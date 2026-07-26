@@ -294,32 +294,6 @@ let gatewaySocket: WebSocket | null = null;
 let hiddenSince: number | null = null;
 const HIDDEN_RECONNECT_THRESHOLD_MS = 30_000;
 
-function installGatewaySocketCapture() {
-    const w = window as any;
-    if (w.__changeEndpointSocketCaptureInstalled) return;
-    w.__changeEndpointSocketCaptureInstalled = true;
-
-    const OriginalWebSocket = window.WebSocket;
-    function PatchedWebSocket(this: any, url: string | URL, protocols?: string | string[]) {
-        const ws = new OriginalWebSocket(url, protocols as any);
-        if (typeof url === "string" && url.includes("gateway.")) gatewaySocket = ws;
-        return ws;
-    }
-    PatchedWebSocket.prototype = OriginalWebSocket.prototype;
-    Object.setPrototypeOf(PatchedWebSocket, OriginalWebSocket);
-    window.WebSocket = PatchedWebSocket as any;
-}
-
-function startHeartbeatWatchdog() {
-    installGatewaySocketCapture();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-}
-
-function stopHeartbeatWatchdog() {
-    document.removeEventListener("visibilitychange", onVisibilityChange);
-    hiddenSince = null;
-}
-
 export default definePlugin({
     name: "ChangeEndpoint",
     description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one)",
@@ -330,7 +304,6 @@ export default definePlugin({
     start() {
         startGuildOrderSync();
         startVoicePhantomFix();
-        startHeartbeatWatchdog();
         startDMUnreadPoll();
 
         if (typeof DiscordNative === "undefined") return;
