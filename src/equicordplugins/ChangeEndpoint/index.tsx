@@ -101,7 +101,6 @@ async function pollSavedGuildOrder() {
         const signature = JSON.stringify(folders);
 
         if (folders.length && signature !== lastSignature) {
-            console.log("[ChangeEndpoint] Applying updated guild order from server", folders);
             const applied = await applyGuildOrder(folders);
             if (applied) lastSignature = signature;
         }
