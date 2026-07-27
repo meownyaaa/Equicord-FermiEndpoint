@@ -101,6 +101,7 @@ async function pollSavedGuildOrder() {
         const signature = JSON.stringify(folders);
 
         if (folders.length && signature !== lastSignature) {
+            console.log("[ChangeEndpoint] Applying updated guild order from server", folders);
             const applied = await applyGuildOrder(folders);
             if (applied) lastSignature = signature;
         }
@@ -269,7 +270,11 @@ async function pollDMUnreads() {
 
 // starting this straight from start() fires before the gateway/REST client
 // is actually up (required plugins boot very early), so the first request
-// silently fails - wait for a real connection instead
+// can silently fail - the CONNECTION_OPEN subscription below covers that
+// case, but by the time this plugin starts (WebpackReady stage) the
+// gateway has usually already connected once, so that event has already
+// fired and won't come again until the next reconnect. try immediately
+// too so we're not just waiting on a reconnect that might not happen soon.
 function onDMPollConnectionOpen() {
     if (dmPollTimer) return;
     pollDMUnreads();
@@ -277,6 +282,7 @@ function onDMPollConnectionOpen() {
 
 function startDMUnreadPoll() {
     FluxDispatcher.subscribe("CONNECTION_OPEN", onDMPollConnectionOpen);
+    onDMPollConnectionOpen();
 }
 
 function stopDMUnreadPoll() {
@@ -293,6 +299,44 @@ let gatewaySocket: WebSocket | null = null;
 let hiddenSince: number | null = null;
 const HIDDEN_RECONNECT_THRESHOLD_MS = 30_000;
 
+function installGatewaySocketCapture() {
+    const w = window as any;
+    if (w.__changeEndpointSocketCaptureInstalled) return;
+    w.__changeEndpointSocketCaptureInstalled = true;
+
+    const OriginalWebSocket = window.WebSocket;
+    function PatchedWebSocket(this: any, url: string | URL, protocols?: string | string[]) {
+        const ws = new OriginalWebSocket(url, protocols as any);
+        if (typeof url === "string" && url.includes("gateway.")) gatewaySocket = ws;
+        return ws;
+    }
+    PatchedWebSocket.prototype = OriginalWebSocket.prototype;
+    Object.setPrototypeOf(PatchedWebSocket, OriginalWebSocket);
+    window.WebSocket = PatchedWebSocket as any;
+}
+
+function onVisibilityChange() {
+    if (document.hidden) {
+        hiddenSince = Date.now();
+        return;
+    }
+    if (hiddenSince && Date.now() - hiddenSince > HIDDEN_RECONNECT_THRESHOLD_MS) {
+        console.log("[ChangeEndpoint] Tab backgrounded - forcing reconnect ahead of a possible heartbeat timeout");
+        gatewaySocket?.close(4000, "ChangeEndpoint proactive reconnect");
+    }
+    hiddenSince = null;
+}
+
+function startHeartbeatWatchdog() {
+    installGatewaySocketCapture();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+}
+
+function stopHeartbeatWatchdog() {
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    hiddenSince = null;
+}
+
 export default definePlugin({
     name: "ChangeEndpoint",
     description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one)",
@@ -303,6 +347,7 @@ export default definePlugin({
     start() {
         startGuildOrderSync();
         startVoicePhantomFix();
+        startHeartbeatWatchdog();
         startDMUnreadPoll();
 
         if (typeof DiscordNative === "undefined") return;
@@ -325,6 +370,7 @@ export default definePlugin({
     stop() {
         stopGuildOrderSync();
         stopVoicePhantomFix();
+        stopHeartbeatWatchdog();
         stopDMUnreadPoll();
     },
 
