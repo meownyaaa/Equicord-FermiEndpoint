@@ -692,5 +692,23 @@ export default definePlugin({
                 replace: "$1$3($self.resolveGifUrl($2),"
             }
         },
+        // Discord's local settings-proto cache (PRELOADED_USER_SETTINGS /
+        // FRECENCY_AND_FAVORITES_SETTINGS) stores several fields as stringified
+        // uint64/int64. Its serializer throws on an empty string, uncaught,
+        // outside any try/catch, which permanently stalls that store's whole
+        // save queue the moment one bad field shows up (every future dirty
+        // write dies at the same line, forever, until reload). Spacebar's guild
+        // feature/onboarding gaps are what actually produce those empty
+        // strings - Discord's own writers always seed a literal "0" - so this
+        // only bites when pointed at a Spacebar backend. Treat "" as zero, same
+        // as the existing "0" case one line above it in the real source.
+        {
+            find: "string is no integer",
+            all: true,
+            replacement: {
+                match: /if\(""==(\i)\)throw Error\("string is no integer"\)/g,
+                replace: 'if(""==$1)return this.ZERO'
+            }
+        },
     ]
 });
