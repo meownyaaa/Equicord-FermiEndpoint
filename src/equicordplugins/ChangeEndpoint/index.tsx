@@ -1,18 +1,28 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+import { Logger } from "@utils/Logger";
+import { parseUrl } from "@utils/misc";
 import definePlugin from "@utils/types";
-import { findByPropsLazy, findStore, findStoreLazy } from "@webpack";
-import { FluxDispatcher, RestAPI } from "@webpack/common";
+import { findByPropsLazy, findStoreLazy } from "@webpack";
+import { ChannelActions, ChannelStore, FluxDispatcher, GuildStore, MessageStore, RestAPI, RTCConnectionStore, SelectedChannelStore, UserStore, VoiceStateStore } from "@webpack/common";
 
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
+
+const logger = new Logger("ChangeEndpoint");
 
 // polls backend's guild_folders, applies them locally, pushes local
 // reordering back. Guards against writing not-yet-loaded guild IDs
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
-const GuildStore = findByPropsLazy("getGuild", "getGuilds");
+const SortedGuildStore = findStoreLazy("SortedGuildStore");
 
 interface HarmonyGuildFolder {
-    id: string | null;
+    id: number | null;
     name: string | null;
     guild_ids: string[];
     color: number | null;
@@ -22,11 +32,11 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSignature: string | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let pollingStarted = false;
+let applyingGuildOrder = false;
 
 const POLL_INTERVAL = 45 * 1000;
 
 function toHarmonyFolders(): HarmonyGuildFolder[] {
-    const SortedGuildStore = findStore("SortedGuildStore");
     const folders = SortedGuildStore.getGuildFolders();
 
     return folders.map((f: any) => ({
@@ -54,16 +64,21 @@ async function pushGuildOrder() {
         });
         lastSignature = JSON.stringify(guild_folders);
     } catch (e) {
-        console.error("[ChangeEndpoint] Failed to push guild order", e);
+        logger.error("Failed to push guild order", e);
     }
 }
 
 function schedulePush() {
+    // applyGuildOrder below dispatches the very events this is subscribed to.
+    // Without this guard, pulling the server's order immediately queues a push
+    // of the order we just applied, and createGuildFolderLocal can't carry the
+    // folder's id/color, so that push would overwrite both on the backend.
+    if (applyingGuildOrder) return;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(pushGuildOrder, 1500);
 }
 
-async function applyGuildOrder(folders: HarmonyGuildFolder[]) {
+function applyGuildOrder(folders: HarmonyGuildFolder[]) {
     const totalIds = folders.reduce((n, f) => n + f.guild_ids.filter(Boolean).length, 0);
     const loadedIds = folders.reduce(
         (n, f) => n + f.guild_ids.filter(id => id && GuildStore.getGuild(id)).length,
@@ -72,23 +87,28 @@ async function applyGuildOrder(folders: HarmonyGuildFolder[]) {
 
     // don't reorder until every guild id is actually loaded
     if (loadedIds < totalIds) {
-        console.log(`[ChangeEndpoint] Guilds not fully loaded yet (${loadedIds}/${totalIds}), deferring order apply`);
+        logger.debug(`Guilds not fully loaded yet (${loadedIds}/${totalIds}), deferring order apply`);
         return false;
     }
 
     let anchor: string | null = null;
 
-    for (const folder of folders) {
-        const ids = folder.guild_ids.filter(Boolean);
-        if (!ids.length) continue;
+    applyingGuildOrder = true;
+    try {
+        for (const folder of folders) {
+            const ids = folder.guild_ids.filter(Boolean);
+            if (!ids.length) continue;
 
-        if (ids.length > 1) {
-            GuildActionCreators.createGuildFolderLocal(ids, folder.name ?? null);
-        } else if (anchor) {
-            GuildActionCreators.moveById(ids[0], anchor, true, false);
+            if (ids.length > 1) {
+                GuildActionCreators.createGuildFolderLocal(ids, folder.name ?? null);
+            } else if (anchor) {
+                GuildActionCreators.moveById(ids[0], anchor, true, false);
+            }
+
+            anchor = ids[ids.length - 1];
         }
-
-        anchor = ids[ids.length - 1];
+    } finally {
+        applyingGuildOrder = false;
     }
 
     return true;
@@ -101,14 +121,15 @@ async function pollSavedGuildOrder() {
         const signature = JSON.stringify(folders);
 
         if (folders.length && signature !== lastSignature) {
-            console.log("[ChangeEndpoint] Applying updated guild order from server", folders);
-            const applied = await applyGuildOrder(folders);
-            if (applied) lastSignature = signature;
+            logger.info("Applying updated guild order from server");
+            if (applyGuildOrder(folders)) lastSignature = signature;
         }
     } catch (e) {
-        console.error("[ChangeEndpoint] Failed to poll saved guild order", e);
+        logger.error("Failed to poll saved guild order", e);
     } finally {
-        pollTimer = setTimeout(pollSavedGuildOrder, POLL_INTERVAL);
+        // stop() may have run while the request was in flight - re-arming here
+        // unconditionally would resurrect the poll it just cancelled
+        if (pollingStarted) pollTimer = setTimeout(pollSavedGuildOrder, POLL_INTERVAL);
     }
 }
 
@@ -127,17 +148,13 @@ function stopGuildOrderSync() {
 
     if (pollTimer) clearTimeout(pollTimer);
     if (debounceTimer) clearTimeout(debounceTimer);
+    pollTimer = debounceTimer = null;
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, schedulePush));
 }
 
 // after a forced reconnect, VoiceStateStore can still claim we're in a
 // channel while RTC is actually dead. cross-check against RTCConnectionStore
 // and force a real leave+rejoin when they disagree.
-
-const VoiceActions = findByPropsLazy("selectVoiceChannel");
-const RTCConnectionStore = findStoreLazy("RTCConnectionStore");
-const VoiceStateStore = findStoreLazy("VoiceStateStore");
-const UserStore = findStoreLazy("UserStore");
 
 // excludes transient states like CONNECTING/ICE_CHECKING/AUTHENTICATING.
 const DEAD_STATES = new Set(["DISCONNECTED", "RTC_DISCONNECTED", "NO_ROUTE"]);
@@ -171,14 +188,14 @@ function attemptVoiceRecovery() {
 
     recovering = true;
     const { channelId } = phantom;
-    console.log(
-        `[ChangeEndpoint] Voice state looks phantom (client thinks it's in ${channelId}, ` +
-        `RTC state is ${RTCConnectionStore.getState()}) - forcing a real rejoin`
+    logger.info(
+        `Voice state looks phantom (client thinks it's in ${channelId}, ` +
+        `RTC state is ${RTCConnectionStore.getState()}), forcing a real rejoin`
     );
 
-    VoiceActions.selectVoiceChannel(null);
+    ChannelActions.selectVoiceChannel(null);
     setTimeout(() => {
-        VoiceActions.selectVoiceChannel(channelId);
+        ChannelActions.selectVoiceChannel(channelId);
         recovering = false;
     }, REJOIN_DELAY_MS);
 }
@@ -211,15 +228,12 @@ function stopVoicePhantomFix() {
 // Skips whatever channel is currently focused, since that one already
 // gets its unread/notification state kept in sync live.
 
-const ChannelStore = findStoreLazy("ChannelStore");
-const MessageStore = findStoreLazy("MessageStore");
-const SelectedChannelStore = findStoreLazy("SelectedChannelStore");
-
 const DM_CHANNEL_TYPE = 1;
 const GROUP_DM_CHANNEL_TYPE = 3;
 const DM_POLL_INTERVAL = 90 * 1000;
 
 let dmPollTimer: ReturnType<typeof setTimeout> | null = null;
+let dmPollingStarted = false;
 
 async function checkChannelForMissedMessage(channel: { id: string; last_message_id: string | null; type: number; }) {
     if (channel.type !== DM_CHANNEL_TYPE && channel.type !== GROUP_DM_CHANNEL_TYPE) return;
@@ -230,8 +244,11 @@ async function checkChannelForMissedMessage(channel: { id: string; last_message_
     // channels the user isn't looking at need this workaround
     if (SelectedChannelStore.getChannelId() === channel.id && document.hasFocus()) return;
 
+    // a channel the client has never seen won't have its lastMessageId
+    // advanced by the replay below, so it would re-fire the same message
+    // (and its notification) on every poll
     const localChannel = ChannelStore.getChannel(channel.id);
-    if (localChannel?.lastMessageId === channel.last_message_id) return;
+    if (!localChannel || localChannel.lastMessageId === channel.last_message_id) return;
     if (MessageStore.getMessage(channel.id, channel.last_message_id)) return;
 
     try {
@@ -242,7 +259,7 @@ async function checkChannelForMissedMessage(channel: { id: string; last_message_
         const message = res?.body?.[0];
         if (!message) return;
 
-        console.log(`[ChangeEndpoint] Replaying missed message in DM ${channel.id} that the gateway never delivered`);
+        logger.info(`Replaying missed message in DM ${channel.id} that the gateway never delivered`);
 
         FluxDispatcher.dispatch({
             type: "MESSAGE_CREATE",
@@ -250,9 +267,9 @@ async function checkChannelForMissedMessage(channel: { id: string; last_message_
             message,
             optimistic: false,
             isPushNotification: false
-        } as any);
+        });
     } catch (e) {
-        console.error(`[ChangeEndpoint] Failed to fetch latest message for channel ${channel.id}`, e);
+        logger.error(`Failed to fetch latest message for channel ${channel.id}`, e);
     }
 }
 
@@ -262,9 +279,10 @@ async function pollDMUnreads() {
         const channels: Array<{ id: string; last_message_id: string | null; type: number; }> = res?.body ?? [];
         await Promise.all(channels.map(checkChannelForMissedMessage));
     } catch (e) {
-        console.error("[ChangeEndpoint] Failed to poll DM unreads", e);
+        logger.error("Failed to poll DM unreads", e);
     } finally {
-        dmPollTimer = setTimeout(pollDMUnreads, DM_POLL_INTERVAL);
+        // same as the guild order poll: don't re-arm a timer stop() cleared
+        if (dmPollingStarted) dmPollTimer = setTimeout(pollDMUnreads, DM_POLL_INTERVAL);
     }
 }
 
@@ -281,11 +299,13 @@ function onDMPollConnectionOpen() {
 }
 
 function startDMUnreadPoll() {
+    dmPollingStarted = true;
     FluxDispatcher.subscribe("CONNECTION_OPEN", onDMPollConnectionOpen);
     onDMPollConnectionOpen();
 }
 
 function stopDMUnreadPoll() {
+    dmPollingStarted = false;
     FluxDispatcher.unsubscribe("CONNECTION_OPEN", onDMPollConnectionOpen);
     if (dmPollTimer) clearTimeout(dmPollTimer);
     dmPollTimer = null;
@@ -297,22 +317,75 @@ function stopDMUnreadPoll() {
 
 let gatewaySocket: WebSocket | null = null;
 let hiddenSince: number | null = null;
+let originalWebSocket: typeof WebSocket | null = null;
 const HIDDEN_RECONNECT_THRESHOLD_MS = 30_000;
 
-function installGatewaySocketCapture() {
-    const w = window as any;
-    if (w.__changeEndpointSocketCaptureInstalled) return;
-    w.__changeEndpointSocketCaptureInstalled = true;
+// the configured gateway host, not the literal "gateway." - a custom instance
+// is free to serve its gateway from any hostname, and matching on "gateway."
+// left the watchdog holding no socket at all on those
+function isGatewayUrl(url: string) {
+    const gateway = getGatewayEndpoint();
+    const host = gateway && parseUrl(gateway)?.host;
+    return host ? url.includes(host) : url.includes("gateway.");
+}
 
-    const OriginalWebSocket = window.WebSocket;
-    function PatchedWebSocket(this: any, url: string | URL, protocols?: string | string[]) {
-        const ws = new OriginalWebSocket(url, protocols as any);
-        if (typeof url === "string" && url.includes("gateway.")) gatewaySocket = ws;
+// Spacebar validates op 3 against ActivitySchema, whose $metadata block marks
+// album_id and artist_ids as required. Discord sends "metadata":{} on every
+// custom status, so the object is present but empty, validation fails, and the
+// gateway closes the socket with 4002 (Decode_error) - setting a custom status
+// disconnects you. Drop metadata unless it carries the fields the schema wants,
+// which leaves real Spotify rich presence untouched.
+// Upstream bug: src/schemas/uncategorised/ActivitySchema.ts, still present as of
+// spacebarchat/server @ 3975d89.
+function sanitiseGatewayPayload(data: string) {
+    if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
+
+    try {
+        const payload = JSON.parse(data);
+        if (payload?.op !== 3 || !Array.isArray(payload.d?.activities)) return data;
+
+        let changed = false;
+        for (const activity of payload.d.activities) {
+            const meta = activity?.metadata;
+            if (!meta || (meta.album_id != null && meta.artist_ids != null)) continue;
+            delete activity.metadata;
+            changed = true;
+        }
+
+        if (!changed) return data;
+
+        logger.debug("Stripped incomplete activity metadata from a presence update to avoid a 4002 close");
+        return JSON.stringify(payload);
+    } catch {
+        return data;
+    }
+}
+
+function installGatewaySocketCapture() {
+    if (originalWebSocket) return;
+
+    const OriginalWebSocket = originalWebSocket = window.WebSocket;
+    function PatchedWebSocket(this: unknown, url: string | URL, protocols?: string | string[]) {
+        const ws = new OriginalWebSocket(url, protocols);
+        if (isGatewayUrl(String(url))) {
+            gatewaySocket = ws;
+
+            const send = ws.send.bind(ws);
+            ws.send = data => send(typeof data === "string" ? sanitiseGatewayPayload(data) : data);
+        }
         return ws;
     }
     PatchedWebSocket.prototype = OriginalWebSocket.prototype;
     Object.setPrototypeOf(PatchedWebSocket, OriginalWebSocket);
-    window.WebSocket = PatchedWebSocket as any;
+    window.WebSocket = PatchedWebSocket as unknown as typeof WebSocket;
+}
+
+function uninstallGatewaySocketCapture() {
+    if (!originalWebSocket) return;
+
+    window.WebSocket = originalWebSocket;
+    originalWebSocket = null;
+    gatewaySocket = null;
 }
 
 function onVisibilityChange() {
@@ -321,7 +394,7 @@ function onVisibilityChange() {
         return;
     }
     if (hiddenSince && Date.now() - hiddenSince > HIDDEN_RECONNECT_THRESHOLD_MS) {
-        console.log("[ChangeEndpoint] Tab backgrounded - forcing reconnect ahead of a possible heartbeat timeout");
+        logger.info("Tab was backgrounded, forcing a reconnect ahead of a possible heartbeat timeout");
         gatewaySocket?.close(4000, "ChangeEndpoint proactive reconnect");
     }
     hiddenSince = null;
@@ -334,15 +407,29 @@ function startHeartbeatWatchdog() {
 
 function stopHeartbeatWatchdog() {
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    uninstallGatewaySocketCapture();
     hiddenSince = null;
 }
 
 export default definePlugin({
     name: "ChangeEndpoint",
-    description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one)",
+    description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one).",
     authors: [],
     required: true,
     settings,
+
+    // The GIF picker sends `url`, which on Klipy is the HTML page for the GIF
+    // rather than the file itself, so nothing embeds. `gifSrc` is the real
+    // image. Favourites are keyed by that same page url and only ever carry a
+    // usable file in `src`, so fall back to it, but not when it's the mp4/webm
+    // preview Klipy returns for search results.
+    resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
+        const withScheme = (url: string) => url.startsWith("//") ? `https:${url}` : url;
+
+        if (item.gifSrc) return withScheme(item.gifSrc);
+        if (item.src && !/\.(mp4|webm)(\?|$)/i.test(item.src)) return withScheme(item.src);
+        return item.url;
+    },
 
     start() {
         startGuildOrderSync();
@@ -375,9 +462,20 @@ export default definePlugin({
     },
 
     patches: [
+        // must run before the API_ENDPOINT rewrite below, which would otherwise
+        // consume the window.GLOBAL_ENV.API_ENDPOINT this match anchors on and
+        // leave the patch silently doing nothing
+        {
+            find: "return\"https:\"+window.GLOBAL_ENV.API_ENDPOINT+(",
+            replacement: {
+                match: /function (\i)\(\)\{let (\i)=!\(arguments\.length>0\)\|\|void 0===arguments\[0\]\|\|arguments\[0\];return"https:"\+window\.GLOBAL_ENV\.API_ENDPOINT\+\(\2\?`\/v\$\{window\.GLOBAL_ENV\.API_VERSION\}`:""\)\}/,
+                replace: 'function $1(){return"https:"+window.GLOBAL_ENV.API_ENDPOINT+`/v${window.GLOBAL_ENV.API_VERSION}`}'
+            }
+        },
         {
             find: "window.GLOBAL_ENV.API_ENDPOINT",
             all: true,
+            predicate: () => getApiEndpoint() != null,
             replacement: {
                 match: /window\.GLOBAL_ENV\.API_ENDPOINT/g,
                 replace: () => JSON.stringify(getApiEndpoint())
@@ -386,6 +484,7 @@ export default definePlugin({
         {
             find: "window.GLOBAL_ENV.CDN_HOST",
             all: true,
+            predicate: () => getCdnHost() != null,
             replacement: {
                 match: /window\.GLOBAL_ENV\.CDN_HOST/g,
                 replace: () => JSON.stringify(getCdnHost())
@@ -394,6 +493,7 @@ export default definePlugin({
         {
             find: "window.GLOBAL_ENV.GATEWAY_ENDPOINT",
             all: true,
+            predicate: () => getGatewayEndpoint() != null,
             replacement: {
                 match: /window\.GLOBAL_ENV\.GATEWAY_ENDPOINT/g,
                 replace: () => JSON.stringify(getGatewayEndpoint())
@@ -402,6 +502,7 @@ export default definePlugin({
         {
             find: "window.GLOBAL_ENV.MEDIA_PROXY_ENDPOINT",
             all: true,
+            predicate: () => getMediaProxyEndpoint() != null,
             replacement: {
                 match: /window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT/g,
                 replace: () => JSON.stringify(getMediaProxyEndpoint())
@@ -427,7 +528,7 @@ export default definePlugin({
             replacement: {
                 match: /\{([\w:,]+)\}=window\.GLOBAL_ENV/g,
                 replace: (fullMatch: string, pairsStr: string) => {
-                    const overrides: Record<string, string> = {
+                    const overrides: Record<string, string | null> = {
                         API_ENDPOINT: getApiEndpoint(),
                         CDN_HOST: getCdnHost(),
                         GATEWAY_ENDPOINT: getGatewayEndpoint(),
@@ -528,7 +629,7 @@ export default definePlugin({
         {
             find: "get platformAlwaysPermits(){return",
             replacement: {
-                match: /get platformAlwaysPermits\(\)\{return.*?\.checkPermissionsEnabled\}/,
+                match: /get platformAlwaysPermits\(\)\{return.{0,100}?\.checkPermissionsEnabled\}/,
                 replace: "get platformAlwaysPermits(){return!0}"
             }
         },
@@ -585,18 +686,11 @@ export default definePlugin({
             }
         },
         {
-            find: "gif_provider:i.provider??",
+            find: 'source_object:"GIF Picker"',
             replacement: {
-                match: /\{gif_provider:(\w+)\.provider\?\?\(0,\w+\.\w+\)\(\),load_id:\w+\.\w+\.getAnalyticsID\(\),source_object:"GIF Picker",gif_url:\1\.url,gif_id:\1\.id\};(\w+)\(\1\.url,void 0,void 0,!0,void 0,\w+\)/,
-                replace: "$2(($1.gifSrc?($1.gifSrc.startsWith('//')?'https:'+$1.gifSrc:$1.gifSrc):$1.url))"
+                match: /(gif_provider:(\i)\.provider.{0,150}?source_object:"GIF Picker",gif_url:\2\.url,gif_id:\2\.id\};)(\i)\(\2\.url,/,
+                replace: "$1$3($self.resolveGifUrl($2),"
             }
         },
-        {
-            find: "return\"https:\"+window.GLOBAL_ENV.API_ENDPOINT+(e?",
-            replacement: {
-                match: /function (\w+)\(\)\{let (\w+)=!\(arguments\.length>0\)\|\|void 0===arguments\[0\]\|\|arguments\[0\];return"https:"\+window\.GLOBAL_ENV\.API_ENDPOINT\+\(\2\?`\/v\$\{window\.GLOBAL_ENV\.API_VERSION\}`:""\)\}/,
-                replace: 'function $1(){return"https:"+window.GLOBAL_ENV.API_ENDPOINT+`/v${window.GLOBAL_ENV.API_VERSION}`}'
-            }
-        }
     ]
 });

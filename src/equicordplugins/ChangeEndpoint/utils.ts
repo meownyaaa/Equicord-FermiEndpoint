@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { settings } from "./settings";
 
 const HARMONY_API_ENDPOINT = "//api.harmony.melodychat.org/api";
@@ -8,19 +14,21 @@ const HARMONY_MEDIA_PROXY_ENDPOINT = "//cdn.harmony.melodychat.org";
 const isSimple = () => settings.store.backend === "custom-simple";
 const isAdvanced = () => settings.store.backend === "custom-advanced";
 
-function getSimpleHost(): string {
+export function getSimpleHost(): string {
     return settings.store.customBackendHost
         .trim()
-        .replace(/^https?:\/\//, "")
-        .replace(/\/+$/, "");
+        .replace(/^\w+:\/\//, "")
+        .replace(/\/.*$/, "");
 }
 
-// shared shape behind all four endpoint getters below: advanced override,
-// then simple-host derivation, then the harmony default
-function resolveEndpoint(advancedValue: string, simpleValue: () => string, fallback: string): string {
-    if (isAdvanced() && advancedValue) return advancedValue.trim();
-    if (isSimple() && settings.store.customBackendHost) return simpleValue();
-    return fallback;
+// shared shape behind all four endpoint getters below. Returning null means
+// "leave window.GLOBAL_ENV alone" - a custom backend must never silently
+// inherit Harmony's cdn/gateway just because that one field was left blank,
+// or the client ends up talking to two different instances at once.
+function resolveEndpoint(advancedValue: string, simpleValue: () => string, harmonyValue: string): string | null {
+    if (isAdvanced()) return advancedValue.trim() || null;
+    if (isSimple()) return settings.store.customBackendHost.trim() ? simpleValue() : null;
+    return harmonyValue;
 }
 
 export const getApiEndpoint = () =>

@@ -1,21 +1,38 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { definePluginSettings } from "@api/Settings";
-import { OptionType } from "@utils/types";
 import { localStorage } from "@utils/localStorage";
+import { Logger } from "@utils/Logger";
+import { OptionType } from "@utils/types";
 import { Alerts, Button, Toasts } from "@webpack/common";
+
+const logger = new Logger("ChangeEndpoint");
+
+// Equicord keeps its own config in localStorage ("EquicordSettings" on web
+// builds) and its DataStore in the "VencordData" IndexedDB database. A blanket
+// clear() would take the client's whole configuration with it, including the
+// backend picked below, so skip anything that belongs to the mod itself.
+const isOurs = (name: string) => name.startsWith("Vencord") || name.startsWith("Equicord");
 
 // bare localStorage/sessionStorage aren't reliably resolvable here - go
 // through @utils/localStorage (= window.localStorage) and window.sessionStorage
 function clearCachedLoginData() {
     try {
-        localStorage.clear();
+        for (const key of Object.keys(localStorage)) {
+            if (!isOurs(key)) localStorage.removeItem(key);
+        }
         window.sessionStorage?.clear();
 
         // IndexedDB holds Discord's cached user/token/session state (including
         // the login token), which is why switching backends without this
         // auto-logs-in with the previous instance's token and freezes at splash
         window.indexedDB?.databases?.()
-            .then(dbs => dbs.forEach(db => db.name && indexedDB.deleteDatabase(db.name)))
-            .catch(e => console.error("[ChangeEndpoint] Failed to enumerate IndexedDB databases", e));
+            .then(dbs => dbs.forEach(db => db.name && !isOurs(db.name) && indexedDB.deleteDatabase(db.name)))
+            .catch(e => logger.error("Failed to enumerate IndexedDB databases", e));
 
         // belt-and-suspenders: also clear any non-HttpOnly cookies on this domain
         for (const cookie of document.cookie.split(";")) {
@@ -29,10 +46,10 @@ function clearCachedLoginData() {
             type: Toasts.Type.SUCCESS
         });
     } catch (e) {
-        console.error("[ChangeEndpoint] Failed to clear cached data", e);
+        logger.error("Failed to clear cached data", e);
         Toasts.show({
             id: Toasts.genId(),
-            message: "Failed to clear cached data - check the console.",
+            message: "Failed to clear cached data, check the console.",
             type: Toasts.Type.FAILURE
         });
     }
@@ -43,7 +60,8 @@ const ClearCacheButton = () => (
         color={Button.Colors.RED}
         onClick={() => Alerts.show({
             title: "Clear cached login data?",
-            body: "This clears localStorage, sessionStorage, and IndexedDB for this client. " +
+            body: "This clears Discord's localStorage, sessionStorage, and IndexedDB for this client. " +
+                "Your Equicord settings and plugin data are kept. " +
                 "You'll need to fully quit Discord (tray icon, not just close the window) and relaunch it " +
                 "afterward. Do this after switching backends if the client freezes at the Discord logo. Continue?",
             confirmText: "Clear data",
@@ -59,13 +77,15 @@ const ClearCacheButton = () => (
 const isSimple = () => settings.store.backend === "custom-simple";
 const isAdvanced = () => settings.store.backend === "custom-advanced";
 
+const required = (value: string) => value.trim() ? true : "Required. Leaving this blank makes the client keep whatever the page's own GLOBAL_ENV says for it.";
+
 export const settings = definePluginSettings({
     backend: {
         type: OptionType.SELECT,
         description: "Backend to connect to",
         restartNeeded: true,
         options: [
-            { label: "Harmony (fermi.chat)", value: "harmony", default: true },
+            { label: "Harmony (harmony.melodychat.org)", value: "harmony", default: true },
             { label: "Custom (Simplified)", value: "custom-simple" },
             { label: "Custom (Advanced)", value: "custom-advanced" }
         ]
@@ -78,37 +98,46 @@ export const settings = definePluginSettings({
             "with \"api.\" - e.g. a request to \"api.rory.server.spacebar.chat/api/v9/...\". Everything after " +
             "\"api.\" and before the next \"/\" is the host to put here. This assumes the instance follows the " +
             "standard api.<host> / cdn.<host> / gateway.<host> convention - if it doesn't, or this doesn't work, " +
-            "use Custom (Advanced) instead and enter each endpoint separately.",
+            "use Custom (Advanced) instead and enter each endpoint separately. Spacebar instances publish their " +
+            "real endpoints at https://<host>/api/policies/instance/domains, which is the authoritative answer " +
+            "if the convention above doesn't hold.",
         default: "",
         restartNeeded: true,
-        hidden: () => !isSimple()
+        hidden: () => !isSimple(),
+        isValid: required
     },
     customApiEndpoint: {
         type: OptionType.STRING,
         description: "Custom API endpoint - only used with Custom (Advanced). " +
             "Include the scheme if your instance needs one (e.g. \"//api.myinstance.example.com/api\" or " +
             "\"https://myinstance.example.com/api\"). This replaces window.GLOBAL_ENV.API_ENDPOINT verbatim, " +
-            "so match your instance's exact format - some Spacebar instances don't use the api.<host>/api convention.",
+            "so match your instance's exact format - some Spacebar instances don't use the api.<host>/api convention. " +
+            "This is the \"apiEndpoint\" field of https://<host>/api/policies/instance/domains.",
         default: "",
         restartNeeded: true,
-        hidden: () => !isAdvanced()
+        hidden: () => !isAdvanced(),
+        isValid: required
     },
     customCdnHost: {
         type: OptionType.STRING,
         description: "Custom CDN host - only used with Custom (Advanced). " +
-            "Just the host, no scheme (e.g. \"cdn.myinstance.example.com\"). Replaces window.GLOBAL_ENV.CDN_HOST verbatim.",
+            "Just the host, no scheme (e.g. \"cdn.myinstance.example.com\"). Replaces window.GLOBAL_ENV.CDN_HOST verbatim. " +
+            "This is the \"cdn\" field of https://<host>/api/policies/instance/domains.",
         default: "",
         restartNeeded: true,
-        hidden: () => !isAdvanced()
+        hidden: () => !isAdvanced(),
+        isValid: required
     },
     customGatewayEndpoint: {
         type: OptionType.STRING,
         description: "Custom gateway endpoint - only used with Custom (Advanced). " +
             "Include the wss:// scheme (e.g. \"wss://gateway.myinstance.example.com\"). " +
-            "Replaces window.GLOBAL_ENV.GATEWAY_ENDPOINT verbatim.",
+            "Replaces window.GLOBAL_ENV.GATEWAY_ENDPOINT verbatim. " +
+            "This is the \"gateway\" field of https://<host>/api/policies/instance/domains.",
         default: "",
         restartNeeded: true,
-        hidden: () => !isAdvanced()
+        hidden: () => !isAdvanced(),
+        isValid: required
     },
     customMediaProxyEndpoint: {
         type: OptionType.STRING,
@@ -118,7 +147,8 @@ export const settings = definePluginSettings({
             "Replaces window.GLOBAL_ENV.MEDIA_PROXY_ENDPOINT verbatim.",
         default: "",
         restartNeeded: true,
-        hidden: () => !isAdvanced()
+        hidden: () => !isAdvanced(),
+        isValid: required
     },
     clearCache: {
         type: OptionType.COMPONENT,
