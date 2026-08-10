@@ -20,7 +20,11 @@ const DiscordObscuredContent = findComponentByCodeLazy<DiscordObscuredContentPro
 function DiscordSpoilerComponent({ children }: { children: ReactNode; }) {
     return (
         <DiscordObscuredContent type="attachment" reason="spoiler" inline={false}>
-            {() => children}
+            {hidden => (
+                <div style={{ overflow: "hidden", filter: hidden ? "blur(44px)" : undefined }}>
+                    {children}
+                </div>
+            )}
         </DiscordObscuredContent>
     );
 }
