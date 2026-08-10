@@ -4,19 +4,24 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import "./style.css";
+
+import ErrorBoundary from "@components/ErrorBoundary";
+import { classNameFactory } from "@utils/css";
 import { Logger } from "@utils/Logger";
 import { parseUrl } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findStoreLazy } from "@webpack";
-import { ChannelActions, ChannelStore, FluxDispatcher, GuildStore, MessageStore, RestAPI, RTCConnectionStore, SelectedChannelStore, UserStore, VoiceStateStore } from "@webpack/common";
+import { ChannelActions, ChannelStore, FluxDispatcher, GuildStore, MessageStore, RestAPI, RTCConnectionStore, SelectedChannelStore, UserStore, useState, VoiceStateStore } from "@webpack/common";
 
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 
 const logger = new Logger("ChangeEndpoint");
+const cl = classNameFactory("vc-changeendpoint-");
 
 // polls backend's guild_folders, applies them locally, pushes local
-// reordering back. Guards against writing not-yet-loaded guild IDs
+// reordering back. guards against writing not-yet-loaded guild IDs
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
@@ -55,14 +60,10 @@ function stripNullIds(folders: HarmonyGuildFolder[]) {
     return folders.map(({ id, ...rest }) => (id == null ? rest : { id, ...rest }));
 }
 
-// the server round-trips these fields in its own key order (id, name, color,
-// guild_ids), not the order we sent them in, so comparing JSON.stringify of
-// what we pushed against JSON.stringify of what a poll reads back always
-// differs even when nothing actually changed. That made every single poll
-// look like a remote change and re-run applyGuildOrder, which re-creates
-// folders that already exist - createGuildFolderLocal isn't idempotent for
-// that, and it has been observed dropping a guild out of a real folder.
-// Comparing arrays (positional, not keyed) sidesteps key order entirely.
+// the server echoes these fields back in its own key order, so comparing
+// JSON.stringify of what we sent against what a poll reads back never
+// matches even when nothing changed - every poll looked like a remote
+// change. positional arrays sidestep key order entirely.
 function folderSignature(folders: Array<{ id?: number | null; name?: string | null; color?: number | null; guild_ids: string[]; }>) {
     return JSON.stringify(folders.map(f => [f.id ?? null, f.name ?? null, f.color ?? null, f.guild_ids]));
 }
@@ -81,10 +82,10 @@ async function pushGuildOrder() {
 }
 
 function schedulePush() {
-    // applyGuildOrder below dispatches the very events this is subscribed to.
-    // Without this guard, pulling the server's order immediately queues a push
-    // of the order we just applied, and createGuildFolderLocal can't carry the
-    // folder's id/color, so that push would overwrite both on the backend.
+    // applyGuildOrder dispatches the events this is subscribed to - without
+    // this guard, pulling the server's order would immediately queue a push
+    // of it right back, and createGuildFolderLocal can't carry id/color, so
+    // that push would wipe both on the backend.
     if (applyingGuildOrder) return;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(pushGuildOrder, 1500);
@@ -105,7 +106,7 @@ function applyGuildOrder(folders: HarmonyGuildFolder[]) {
 
     // createGuildFolderLocal isn't idempotent: calling it again for a guild
     // set that's already exactly one existing folder doesn't just no-op, it
-    // can drop a guild out of that folder. Skip folders that already exist.
+    // can drop a guild out of that folder - skip folders that already exist.
     const existingFolderSets = SortedGuildStore.getGuildFolders()
         .map((f: any) => new Set(f.guildIds as string[]));
 
@@ -236,16 +237,11 @@ function stopVoicePhantomFix() {
     recovering = false;
 }
 
-// Harmony/Fermo only populate DM unread state once, from the initial
-// READY payload - after that it's 100% dependent on MESSAGE_CREATE
-// gateway events arriving for private channels. If one gets dropped
-// (flaky gateway dispatch for DMs), that unread/ping never appears
-// until a full refresh. Poll the DM channel list over REST every 90
-// seconds and replay any message the client hasn't seen through the
-// normal MESSAGE_CREATE flow, so ReadState/badges/notifications get
-// recomputed the same way they would from a live gateway event.
-// Skips whatever channel is currently focused, since that one already
-// gets its unread/notification state kept in sync live.
+// harmony/fermo only populate DM unread state once, from the initial READY
+// payload - after that it depends entirely on MESSAGE_CREATE gateway events
+// for private channels. if one gets dropped, poll the DM channel list every
+// 90 seconds and replay anything the client hasn't seen, skipping whatever
+// channel is currently focused since that one already syncs live.
 
 const DM_CHANNEL_TYPE = 1;
 const GROUP_DM_CHANNEL_TYPE = 3;
@@ -348,14 +344,11 @@ function isGatewayUrl(url: string) {
     return host ? url.includes(host) : url.includes("gateway.");
 }
 
-// Spacebar validates op 3 against ActivitySchema, whose $metadata block marks
-// album_id and artist_ids as required. Discord sends "metadata":{} on every
-// custom status, so the object is present but empty, validation fails, and the
-// gateway closes the socket with 4002 (Decode_error) - setting a custom status
-// disconnects you. Drop metadata unless it carries the fields the schema wants,
-// which leaves real Spotify rich presence untouched.
-// Upstream bug: src/schemas/uncategorised/ActivitySchema.ts, still present as of
-// spacebarchat/server @ 3975d89.
+// spacebar's ActivitySchema requires album_id/artist_ids whenever $metadata
+// is present, but discord sends "metadata":{} on every custom status - that
+// fails validation and the gateway closes with 4002. drop metadata unless it
+// carries what the schema wants, which leaves real Spotify presence intact.
+// upstream bug: spacebarchat/server src/schemas/uncategorised/ActivitySchema.ts
 function sanitiseGatewayPayload(data: string) {
     if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
 
@@ -424,6 +417,97 @@ function startHeartbeatWatchdog() {
     document.addEventListener("visibilitychange", onVisibilityChange);
 }
 
+// discord still sends `is_spoiler` on cloud-uploaded message attachments,
+// but spacebar's schema never added that field and rejects the whole
+// message with a 400 the moment it's present. spoiler status already lives
+// in the attachment's SPOILER_ filename prefix, so dropping the flag loses
+// nothing - it just stops the send from being rejected outright.
+const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
+
+function stripIsSpoiler(body: string) {
+    if (!body.includes('"is_spoiler"')) return body;
+
+    try {
+        const payload = JSON.parse(body);
+        if (!Array.isArray(payload.attachments)) return body;
+
+        let changed = false;
+        for (const attachment of payload.attachments) {
+            if (attachment && "is_spoiler" in attachment) {
+                delete attachment.is_spoiler;
+                changed = true;
+            }
+        }
+
+        if (!changed) return body;
+
+        logger.debug("stripped is_spoiler from a message attachment, spacebar doesn't support that field");
+        return JSON.stringify(payload);
+    } catch {
+        return body;
+    }
+}
+
+// the video patch below replaces discord's real video component with a bare
+// <video> tag (to fix its src resolution against spacebar's CDN), which
+// drops that component's own spoiler handling along with everything else it
+// did. this rebuilds just the blur/reveal overlay, gated the same way
+// discord and every other spacebar client detect it: the SPOILER_ filename
+// prefix, since spacebar's attachment schema doesn't send the flags field
+// discord's own detection normally reads.
+function SpoilerVideoComponent({ src, maxWidth, maxHeight }: { src: string; maxWidth: number; maxHeight: number; }) {
+    const [revealed, setRevealed] = useState(false);
+
+    return (
+        <div className={cl("spoiler-wrapper")}>
+            <video
+                src={src}
+                controls={revealed}
+                preload="metadata"
+                className={revealed ? undefined : cl("spoiler-video")}
+                style={{ maxWidth, maxHeight, width: "100%" }}
+            />
+            {!revealed && (
+                <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Spoiler"
+                    className={cl("spoiler-overlay")}
+                    onClick={() => setRevealed(true)}
+                    onKeyDown={e => (e.key === "Enter" || e.key === " ") && setRevealed(true)}
+                >
+                    <span className={cl("spoiler-label")}>Spoiler</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+const SpoilerVideo = ErrorBoundary.wrap(SpoilerVideoComponent, { noop: true });
+
+let originalFetch: typeof fetch | null = null;
+
+function installFetchSanitiser() {
+    if (originalFetch) return;
+
+    const OriginalFetch = originalFetch = window.fetch;
+    window.fetch = (input, init) => {
+        if (init && (init.method === "POST" || init.method === "PATCH") && typeof init.body === "string") {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (MESSAGE_URL_RE.test(new URL(url, location.origin).pathname)) {
+                init = { ...init, body: stripIsSpoiler(init.body) };
+            }
+        }
+        return OriginalFetch(input, init);
+    };
+}
+
+function uninstallFetchSanitiser() {
+    if (!originalFetch) return;
+    window.fetch = originalFetch;
+    originalFetch = null;
+}
+
 function stopHeartbeatWatchdog() {
     document.removeEventListener("visibilitychange", onVisibilityChange);
     uninstallGatewaySocketCapture();
@@ -437,11 +521,9 @@ export default definePlugin({
     required: true,
     settings,
 
-    // The GIF picker sends `url`, which on Klipy is the HTML page for the GIF
-    // rather than the file itself, so nothing embeds. `gifSrc` is the real
-    // image. Favourites are keyed by that same page url and only ever carry a
-    // usable file in `src`, so fall back to it, but not when it's the mp4/webm
-    // preview Klipy returns for search results.
+    // the GIF picker sends `url`, which on Klipy is the HTML page for the GIF,
+    // not the file itself - `gifSrc` is the real image. favourites only carry
+    // a usable file in `src`, except when it's the mp4/webm search preview.
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
         const withScheme = (url: string) => url.startsWith("//") ? `https:${url}` : url;
 
@@ -450,11 +532,22 @@ export default definePlugin({
         return item.url;
     },
 
+    renderSpoilerVideo(item: { originalItem?: { url?: string; filename?: string; }; downloadUrl?: string; }, maxWidth: number, maxHeight: number) {
+        const src = item.originalItem?.url ?? item.downloadUrl ?? "";
+
+        if (!item.originalItem?.filename?.startsWith("SPOILER_")) {
+            return <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />;
+        }
+
+        return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} />;
+    },
+
     start() {
         startGuildOrderSync();
         startVoicePhantomFix();
         startHeartbeatWatchdog();
         startDMUnreadPoll();
+        installFetchSanitiser();
 
         if (typeof DiscordNative === "undefined") return;
 
@@ -478,6 +571,7 @@ export default definePlugin({
         stopVoicePhantomFix();
         stopHeartbeatWatchdog();
         stopDMUnreadPoll();
+        uninstallFetchSanitiser();
     },
 
     patches: [
@@ -670,10 +764,23 @@ export default definePlugin({
         },
         {
             find: 'case"VIDEO":case"CLIP":return(0,',
+            predicate: () => !settings.store.useNativeVideoPlayer,
             replacement: {
-                match: /case"VIDEO":case"CLIP":return\(0,(\w+\.\w+)\)\(\w+,\{item:(\w+),[^}]*\}\)/,
-                replace: (match: string, jsxfn: string, item: string) =>
-                    `case"VIDEO":case"CLIP":return(0,${jsxfn})("video",{src:${item}.originalItem?.url??${item}.downloadUrl,controls:!0,preload:"metadata",style:{maxWidth:_||640,maxHeight:D||400,width:"100%"}})`
+                match: /case"VIDEO":case"CLIP":return\(0,(?:\w+\.\w+)\)\(\w+,\{item:(\w+),[^}]*\}\)/,
+                replace: (match: string, item: string) =>
+                    `case"VIDEO":case"CLIP":return $self.renderSpoilerVideo(${item},_||640,D||400)`
+            }
+        },
+        // spacebar's attachment schema never sends the `flags` field discord's
+        // spoiler detection is normally computed from, so every attachment
+        // type (not just video) reads as never-spoilered. fall back to the
+        // SPOILER_ filename prefix, same convention discord itself used to
+        // rely on and every spacebar client still does.
+        {
+            find: "IS_SPOILER)",
+            replacement: {
+                match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
+                replace: 'spoiler:$2.filename?.startsWith("SPOILER_")||$1'
             }
         },
         {
@@ -711,16 +818,11 @@ export default definePlugin({
                 replace: "$1$3($self.resolveGifUrl($2),"
             }
         },
-        // Discord's local settings-proto cache (PRELOADED_USER_SETTINGS /
-        // FRECENCY_AND_FAVORITES_SETTINGS) stores several fields as stringified
-        // uint64/int64. Its serializer throws on an empty string, uncaught,
-        // outside any try/catch, which permanently stalls that store's whole
-        // save queue the moment one bad field shows up (every future dirty
-        // write dies at the same line, forever, until reload). Spacebar's guild
-        // feature/onboarding gaps are what actually produce those empty
-        // strings - Discord's own writers always seed a literal "0" - so this
-        // only bites when pointed at a Spacebar backend. Treat "" as zero, same
-        // as the existing "0" case one line above it in the real source.
+        // discord's settings-proto writer throws on an empty string in a
+        // uint64 field, uncaught, which stalls that store's whole save queue
+        // forever. spacebar's guild/onboarding gaps are what leave a field
+        // empty instead of discord's own literal "0" default - treat "" as
+        // zero, same as the existing "0" case one line above in the source.
         {
             find: "string is no integer",
             all: true,

@@ -12,10 +12,10 @@ import { Alerts, Button, Toasts } from "@webpack/common";
 
 const logger = new Logger("ChangeEndpoint");
 
-// Equicord keeps its own config in localStorage ("EquicordSettings" on web
-// builds) and its DataStore in the "VencordData" IndexedDB database. A blanket
-// clear() would take the client's whole configuration with it, including the
-// backend picked below, so skip anything that belongs to the mod itself.
+// equicord keeps its own config in localStorage ("EquicordSettings" on web
+// builds) and its DataStore in the "VencordData" IndexedDB database - a
+// blanket clear() would take that with it too, including the backend
+// picked below, so skip anything that belongs to the mod itself.
 const isOurs = (name: string) => name.startsWith("Vencord") || name.startsWith("Equicord");
 
 // bare localStorage/sessionStorage aren't reliably resolvable here - go
@@ -149,6 +149,15 @@ export const settings = definePluginSettings({
         restartNeeded: true,
         hidden: () => !isAdvanced(),
         isValid: required
+    },
+    useNativeVideoPlayer: {
+        type: OptionType.BOOLEAN,
+        description: "Use Discord's real video player for attachments instead of a plain HTML5 video element. " +
+            "The plain element is the default because Discord's player has had trouble loading video from some " +
+            "Spacebar CDNs, but it also drops Discord's own spoiler blur and other player chrome. Turn this on " +
+            "to get those back if your instance's video URLs work fine with the real player.",
+        default: false,
+        restartNeeded: true
     },
     clearCache: {
         type: OptionType.COMPONENT,
