@@ -17,6 +17,7 @@ import type { ReactNode } from "react";
 
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
+import { CustomVideoPlayer } from "./videoPlayer";
 
 const logger = new Logger("ChangeEndpoint");
 const cl = classNameFactory("vc-changeendpoint-");
@@ -404,7 +405,9 @@ export default definePlugin({
         const src = item.originalItem?.url ?? item.downloadUrl ?? "";
 
         if (!item.originalItem?.filename?.startsWith("SPOILER_")) {
-            return <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />;
+            return settings.store.useNativeVideoPlayer
+                ? <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} />
+                : <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />;
         }
 
         return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} />;
@@ -671,19 +674,10 @@ export default definePlugin({
         },
         {
             find: 'case"VIDEO":case"CLIP":return(0,',
-            predicate: () => !settings.store.useNativeVideoPlayer,
             replacement: {
                 match: /case"VIDEO":case"CLIP":return\(0,(?:\w+\.\w+)\)\(\w+,\{item:(\w+),[^}]*\}\)/,
                 replace: (match: string, item: string) =>
                     `case"VIDEO":case"CLIP":return $self.renderSpoilerVideo(${item},_||640,D||400)`
-            }
-        },
-        {
-            find: 'a.searchParams.append("format","webp"),i)',
-            predicate: () => settings.store.useNativeVideoPlayer,
-            replacement: {
-                match: /a\.searchParams\.append\("format","webp"\),i\)/,
-                replace: "i)"
             }
         },
         {

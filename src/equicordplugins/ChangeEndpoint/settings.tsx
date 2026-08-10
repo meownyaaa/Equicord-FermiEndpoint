@@ -142,10 +142,10 @@ export const settings = definePluginSettings({
     },
     useNativeVideoPlayer: {
         type: OptionType.BOOLEAN,
-        description: "Use Discord's real video player for attachments instead of a plain HTML5 video element. " +
-            "The plain element is the default because Discord's player has had trouble loading video from some " +
-            "Spacebar CDNs, but it also drops Discord's own spoiler blur and other player chrome. Turn this on " +
-            "to get those back if your instance's video URLs work fine with the real player.",
+        description: "Use a custom Discord-styled video player (play/pause, seek bar, volume, fullscreen) for " +
+            "attachments instead of a plain HTML5 video element with the browser's default controls. Discord's " +
+            "actual built-in player depends on server-side video processing Spacebar instances don't provide, " +
+            "so this plugin never uses it - this toggle only picks between the plain element and this custom one.",
         default: false,
         restartNeeded: true
     },
