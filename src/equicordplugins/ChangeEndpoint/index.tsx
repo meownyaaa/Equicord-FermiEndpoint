@@ -766,6 +766,9 @@ export default definePlugin({
         // getObscureReason patch below for that. fall back to the SPOILER_
         // filename prefix here too, same convention discord itself used to
         // rely on and every spacebar client still does.
+        // the flags source here can be either the raw attachment or a
+        // wrapper item that nests it under `.originalItem` depending on call
+        // site - check both rather than assume one shape.
         // "IS_SPOILER)" also occurs in the getObscureReason classifier below,
         // with a different shape (no `spoiler:` prefix) - match correctly
         // skips it, noWarn quiets the resulting "had no effect" here.
@@ -773,7 +776,7 @@ export default definePlugin({
             find: "IS_SPOILER)",
             replacement: {
                 match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
-                replace: 'spoiler:$2.filename?.startsWith("SPOILER_")||$1',
+                replace: 'spoiler:($2.filename??$2.originalItem?.filename)?.startsWith("SPOILER_")||$1',
                 noWarn: true
             }
         },
@@ -783,13 +786,16 @@ export default definePlugin({
         // reads the same missing `flags` field through a separate call path
         // from the `spoiler:` property patched above, so fixing that one
         // alone left image spoilers rendering fully visible despite the
-        // correct SPOILER_ filename.
+        // correct SPOILER_ filename. the destructured param is treated as the
+        // raw attachment inside this function, but the caller we found live
+        // passes the wrapper item instead - filename can be on either
+        // depending on call site, so check both.
         {
             find: "POTENTIAL_EXPLICIT_CONTENT",
             replacement: {
                 match: /function \i\((\i),\i\)\{let\{flags:\i=0\}=\1,.{0,150}?(\(0,\i\.\i\)\(\i,\i\.\i\.IS_SPOILER\))\?/,
                 replace: (match: string, param: string, flagCheck: string) =>
-                    match.replace(flagCheck, `(${param}.filename?.startsWith("SPOILER_")||${flagCheck})`)
+                    match.replace(flagCheck, `((${param}.filename??${param}.originalItem?.filename)?.startsWith("SPOILER_")||${flagCheck})`)
             }
         },
         {
