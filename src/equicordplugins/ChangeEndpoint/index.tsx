@@ -679,6 +679,14 @@ export default definePlugin({
             }
         },
         {
+            find: 'case"IMAGE":return(0,',
+            replacement: {
+                match: /case"IMAGE":return\(0,\i\.\i\)\(\i\.\i\.Consumer,\{children:\i=>(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))\}\)/,
+                replace: (match: string, call: string, item: string) =>
+                    match.replace(call, `$self.wrapSpoiler(${item},${call})`)
+            }
+        },
+        {
             find: 'case"AUDIO":return(0,',
             replacement: {
                 match: /case"AUDIO":return(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))/,
