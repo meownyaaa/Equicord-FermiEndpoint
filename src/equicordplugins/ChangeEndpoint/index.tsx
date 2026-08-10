@@ -336,6 +336,18 @@ function uninstallGatewaySendSanitiser() {
 // know about it.
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 
+function applySpoilerFilename(upload: { filename: string; spoiler: boolean; }) {
+    if (!upload.spoiler) return;
+    if (!upload.filename.startsWith("SPOILER_")) upload.filename = "SPOILER_" + upload.filename;
+    upload.spoiler = false;
+}
+
+// keyed by the live upload object itself (not an id), released from the
+// send handler once it has the final uploads list - a WeakMap means an
+// attachment removed before send is simply never released and gets
+// collected normally instead of leaking
+const pendingUploadTriggers = new WeakMap<object, () => void>();
+
 function stripIsSpoiler(body: string) {
     if (!body.includes('"is_spoiler"')) return body;
 
@@ -485,16 +497,38 @@ export default definePlugin({
         return <SpoilerOverlay>{node}</SpoilerOverlay>;
     },
 
-    // discord's own upload pipeline is a more reliable place to fix this than
-    // trying to catch the eventual network call: it runs once, synchronously,
-    // on the real CloudUpload object, before the REST client builds anything.
-    // baking the prefix in here and clearing .spoiler means is_spoiler never
-    // gets constructed in the first place, on every send path uploadFiles()
-    // covers, not just whichever one happens to call window.fetch directly.
-    fixUploadSpoiler(upload: { filename: string; spoiler: boolean; }) {
-        if (!upload.spoiler) return;
-        if (!upload.filename.startsWith("SPOILER_")) upload.filename = "SPOILER_" + upload.filename;
-        upload.spoiler = false;
+    // discord's uploader starts the real presigned-url request the instant a
+    // file is attached, well before a user can realistically toggle spoiler -
+    // and spacebar locks the filename in permanently at that point (the
+    // message-create request's own filename field is ignored server-side).
+    // the uploadFiles patch below holds the trigger open instead of letting
+    // it fire immediately; this releases it once the send handler actually
+    // has the final uploads list, applying the correct prefix right before
+    // the real upload starts for the first time.
+    waitForUploadTrigger(files: { filename: string; spoiler: boolean; }[]) {
+        return new Promise<void>(resolve => {
+            if (files.length === 0) {
+                resolve();
+                return;
+            }
+            let remaining = files.length;
+            for (const file of files) {
+                pendingUploadTriggers.set(file, () => {
+                    applySpoilerFilename(file);
+                    if (--remaining === 0) resolve();
+                });
+            }
+        });
+    },
+
+    releaseUploadsIfPending(uploads: object[]) {
+        for (const upload of uploads) {
+            const release = pendingUploadTriggers.get(upload);
+            if (release) {
+                pendingUploadTriggers.delete(upload);
+                release();
+            }
+        }
     },
 
     start() {
@@ -528,11 +562,28 @@ export default definePlugin({
     },
 
     patches: [
+        // this call is what actually fires the presigned-url request for
+        // every file in the batch, immediately - holding it open until the
+        // send handler releases it (see the handleSendMessage patch below)
+        // is what lets a spoiler toggled after attaching still take effect.
         {
-            find: "async uploadFiles(",
+            find: "this._recomputeProgress.bind(this)",
             replacement: {
-                match: /async uploadFiles\((\i)\){/,
-                replace: "$&$1.forEach($self.fixUploadSpoiler);"
+                match: /await \(0,\i\.\i\)\(this\.files,!0,this\._recomputeProgress\.bind\(this\)\)/,
+                replace: "await $self.waitForUploadTrigger(this.files);$&"
+            }
+        },
+        // releases whatever uploads this specific send is carrying the
+        // moment the send handler has them, before anything downstream
+        // waits on them - this handler doesn't itself gate on upload
+        // status, so releasing here doesn't deadlock the way releasing
+        // from inside the message-create request did.
+        {
+            find: "announcementSendOptions:",
+            replacement: {
+                match: /\{value:\i,uploads:(\i),stickers:\i,command:\i,commandOptionValues:\i,isGif:\i,gifMetadata:\i,components:\i,announcementSendOptions:\i\}=\i;/,
+                replace: (match: string, uploads: string) => `${match}$self.releaseUploadsIfPending(${uploads}??[]);`,
+                noWarn: true
             }
         },
         // must run before the API_ENDPOINT rewrite below, which would otherwise
