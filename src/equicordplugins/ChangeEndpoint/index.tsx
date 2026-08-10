@@ -13,6 +13,7 @@ import { parseUrl } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findStoreLazy } from "@webpack";
 import { ChannelStore, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, useState } from "@webpack/common";
+import type { ReactNode } from "react";
 
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
@@ -399,6 +400,35 @@ function SpoilerVideoComponent({ src, maxWidth, maxHeight }: { src: string; maxW
 
 const SpoilerVideo = ErrorBoundary.wrap(SpoilerVideoComponent, { noop: true });
 
+// audio and generic file attachments never receive discord's own
+// getObscureReason check at all (their dispatch case doesn't pass it down),
+// so patching that classifier alone leaves them fully visible. wrap them the
+// same way as video: render discord's real component untouched, just cover
+// it with our own reveal overlay when the filename says spoiler.
+function SpoilerOverlayComponent({ children }: { children: ReactNode; }) {
+    const [revealed, setRevealed] = useState(false);
+
+    return (
+        <div className={cl("spoiler-wrapper")}>
+            <div className={revealed ? undefined : cl("spoiler-content")}>{children}</div>
+            {!revealed && (
+                <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Spoiler"
+                    className={cl("spoiler-overlay")}
+                    onClick={() => setRevealed(true)}
+                    onKeyDown={e => (e.key === "Enter" || e.key === " ") && setRevealed(true)}
+                >
+                    <span className={cl("spoiler-label")}>Spoiler</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+const SpoilerOverlay = ErrorBoundary.wrap(SpoilerOverlayComponent, { noop: true });
+
 let originalFetch: typeof fetch | null = null;
 
 function installFetchSanitiser() {
@@ -448,6 +478,11 @@ export default definePlugin({
         }
 
         return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} />;
+    },
+
+    wrapSpoiler(item: { originalItem?: { filename?: string; }; }, node: ReactNode) {
+        if (!item.originalItem?.filename?.startsWith("SPOILER_")) return node;
+        return <SpoilerOverlay>{node}</SpoilerOverlay>;
     },
 
     // discord's own upload pipeline is a more reliable place to fix this than
@@ -696,6 +731,34 @@ export default definePlugin({
                     `case"VIDEO":case"CLIP":return $self.renderSpoilerVideo(${item},_||640,D||400)`
             }
         },
+        // audio, generic files, and plaintext previews never get discord's
+        // getObscureReason passed to their case at all, unlike image/video -
+        // wrap their (untouched) render output in our own overlay instead of
+        // chasing whichever internal classifier those components use.
+        {
+            find: 'case"AUDIO":return(0,',
+            replacement: {
+                match: /case"AUDIO":return(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))/,
+                replace: (match: string, call: string, item: string) =>
+                    `case"AUDIO":return $self.wrapSpoiler(${item},${call})`
+            }
+        },
+        {
+            find: 'case"PLAINTEXT_PREVIEW":return(0,',
+            replacement: {
+                match: /case"PLAINTEXT_PREVIEW":return(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))/,
+                replace: (match: string, call: string, item: string) =>
+                    `case"PLAINTEXT_PREVIEW":return $self.wrapSpoiler(${item},${call})`
+            }
+        },
+        {
+            find: 'case"OTHER":return(0,',
+            replacement: {
+                match: /case"OTHER":return(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))/,
+                replace: (match: string, call: string, item: string) =>
+                    `case"OTHER":return $self.wrapSpoiler(${item},${call})`
+            }
+        },
         // spacebar's attachment schema never sends the `flags` field discord's
         // spoiler detection is normally computed from. this feeds `item.spoiler`
         // (composer/download-button UI), which isn't what actually decides
@@ -714,12 +777,13 @@ export default definePlugin({
                 noWarn: true
             }
         },
-        // this is the function that actually gates the blur/reveal overlay for
-        // image, audio, and generic file attachments (video has its own
-        // component, replaced entirely by the patch above). it reads the same
-        // missing `flags` field through a separate call path from the `spoiler:`
-        // property patched above, so fixing that one alone left every non-video
-        // spoiler rendering fully visible despite the correct SPOILER_ filename.
+        // this is the function that gates the blur/reveal overlay for image
+        // attachments (video/audio/file are handled by the patches above
+        // instead, since their dispatch cases never call this at all). it
+        // reads the same missing `flags` field through a separate call path
+        // from the `spoiler:` property patched above, so fixing that one
+        // alone left image spoilers rendering fully visible despite the
+        // correct SPOILER_ filename.
         {
             find: "POTENTIAL_EXPLICIT_CONTENT",
             replacement: {

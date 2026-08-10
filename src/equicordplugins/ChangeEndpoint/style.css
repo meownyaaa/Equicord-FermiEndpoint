@@ -3,7 +3,8 @@
     display: inline-block;
 }
 
-.vc-changeendpoint-spoiler-video {
+.vc-changeendpoint-spoiler-video,
+.vc-changeendpoint-spoiler-content {
     filter: blur(44px);
 }
 
