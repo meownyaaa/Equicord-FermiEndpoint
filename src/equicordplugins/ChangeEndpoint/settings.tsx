@@ -12,14 +12,8 @@ import { Alerts, Button, Toasts } from "@webpack/common";
 
 const logger = new Logger("ChangeEndpoint");
 
-// equicord keeps its own config in localStorage ("EquicordSettings" on web
-// builds) and its DataStore in the "VencordData" IndexedDB database - a
-// blanket clear() would take that with it too, including the backend
-// picked below, so skip anything that belongs to the mod itself.
 const isOurs = (name: string) => name.startsWith("Vencord") || name.startsWith("Equicord");
 
-// bare localStorage/sessionStorage aren't reliably resolvable here - go
-// through @utils/localStorage (= window.localStorage) and window.sessionStorage
 function clearCachedLoginData() {
     try {
         for (const key of Object.keys(localStorage)) {
@@ -27,14 +21,10 @@ function clearCachedLoginData() {
         }
         window.sessionStorage?.clear();
 
-        // IndexedDB holds Discord's cached user/token/session state (including
-        // the login token), which is why switching backends without this
-        // auto-logs-in with the previous instance's token and freezes at splash
         window.indexedDB?.databases?.()
             .then(dbs => dbs.forEach(db => db.name && !isOurs(db.name) && indexedDB.deleteDatabase(db.name)))
             .catch(e => logger.error("Failed to enumerate IndexedDB databases", e));
 
-        // belt-and-suspenders: also clear any non-HttpOnly cookies on this domain
         for (const cookie of document.cookie.split(";")) {
             const name = cookie.split("=")[0]?.trim();
             if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;

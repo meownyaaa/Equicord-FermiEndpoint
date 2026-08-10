@@ -21,10 +21,6 @@ export function getSimpleHost(): string {
         .replace(/\/.*$/, "");
 }
 
-// shared shape behind all four endpoint getters below - returning null means
-// "leave window.GLOBAL_ENV alone", so a custom backend never silently
-// inherits harmony's cdn/gateway just because one field was left blank,
-// which would otherwise talk to two different instances at once.
 function resolveEndpoint(advancedValue: string, simpleValue: () => string, harmonyValue: string): string | null {
     if (isAdvanced()) return advancedValue.trim() || null;
     if (isSimple()) return settings.store.customBackendHost.trim() ? simpleValue() : null;

@@ -21,9 +21,6 @@ import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint }
 const logger = new Logger("ChangeEndpoint");
 const cl = classNameFactory("vc-changeendpoint-");
 
-// polls backend's guild_folders, applies them locally, pushes local
-// reordering back. guards against writing not-yet-loaded guild IDs
-
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
 const UploadManager = findByPropsLazy("clearAll", "addFile");
@@ -55,18 +52,10 @@ function toHarmonyFolders(): HarmonyGuildFolder[] {
     }));
 }
 
-// discord's local proto settings cache writes folder id as a uint64 field.
-// echoing an explicit `null` back through the rest round-trip breaks that
-// write (seen as "string is no integer" in the console) - strip null ids
-// from the outgoing payload instead of sending them as null.
 function stripNullIds(folders: HarmonyGuildFolder[]) {
     return folders.map(({ id, ...rest }) => (id == null ? rest : { id, ...rest }));
 }
 
-// the server echoes these fields back in its own key order, so comparing
-// JSON.stringify of what we sent against what a poll reads back never
-// matches even when nothing changed - every poll looked like a remote
-// change. positional arrays sidestep key order entirely.
 function folderSignature(folders: Array<{ id?: number | null; name?: string | null; color?: number | null; guild_ids: string[]; }>) {
     return JSON.stringify(folders.map(f => [f.id ?? null, f.name ?? null, f.color ?? null, f.guild_ids]));
 }
@@ -85,10 +74,6 @@ async function pushGuildOrder() {
 }
 
 function schedulePush() {
-    // applyGuildOrder dispatches the events this is subscribed to - without
-    // this guard, pulling the server's order would immediately queue a push
-    // of it right back, and createGuildFolderLocal can't carry id/color, so
-    // that push would wipe both on the backend.
     if (applyingGuildOrder) return;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(pushGuildOrder, 1500);
@@ -101,15 +86,11 @@ function applyGuildOrder(folders: HarmonyGuildFolder[]) {
         0
     );
 
-    // don't reorder until every guild id is actually loaded
     if (loadedIds < totalIds) {
         logger.debug(`Guilds not fully loaded yet (${loadedIds}/${totalIds}), deferring order apply`);
         return false;
     }
 
-    // createGuildFolderLocal isn't idempotent: calling it again for a guild
-    // set that's already exactly one existing folder doesn't just no-op, it
-    // can drop a guild out of that folder - skip folders that already exist.
     const existingFolderSets = SortedGuildStore.getGuildFolders()
         .map((f: any) => new Set(f.guildIds as string[]));
 
@@ -150,8 +131,6 @@ async function pollSavedGuildOrder() {
     } catch (e) {
         logger.error("Failed to poll saved guild order", e);
     } finally {
-        // stop() may have run while the request was in flight - re-arming here
-        // unconditionally would resurrect the poll it just cancelled
         if (pollingStarted) pollTimer = setTimeout(pollSavedGuildOrder, POLL_INTERVAL);
     }
 }
@@ -175,12 +154,6 @@ function stopGuildOrderSync() {
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, schedulePush));
 }
 
-// harmony/fermo only populate DM unread state once, from the initial READY
-// payload - after that it depends entirely on MESSAGE_CREATE gateway events
-// for private channels. if one gets dropped, poll the DM channel list every
-// 90 seconds and replay anything the client hasn't seen, skipping whatever
-// channel is currently focused since that one already syncs live.
-
 const DM_CHANNEL_TYPE = 1;
 const GROUP_DM_CHANNEL_TYPE = 3;
 const DM_POLL_INTERVAL = 90 * 1000;
@@ -192,14 +165,8 @@ async function checkChannelForMissedMessage(channel: { id: string; last_message_
     if (channel.type !== DM_CHANNEL_TYPE && channel.type !== GROUP_DM_CHANNEL_TYPE) return;
     if (!channel.last_message_id) return;
 
-    // notifications/unreads already work fine for whatever DM is
-    // currently focused (it gets marked read/ack'd live) - only
-    // channels the user isn't looking at need this workaround
     if (SelectedChannelStore.getChannelId() === channel.id && document.hasFocus()) return;
 
-    // a channel the client has never seen won't have its lastMessageId
-    // advanced by the replay below, so it would re-fire the same message
-    // (and its notification) on every poll
     const localChannel = ChannelStore.getChannel(channel.id);
     if (!localChannel || localChannel.lastMessageId === channel.last_message_id) return;
     if (MessageStore.getMessage(channel.id, channel.last_message_id)) return;
@@ -234,18 +201,10 @@ async function pollDMUnreads() {
     } catch (e) {
         logger.error("Failed to poll DM unreads", e);
     } finally {
-        // same as the guild order poll: don't re-arm a timer stop() cleared
         if (dmPollingStarted) dmPollTimer = setTimeout(pollDMUnreads, DM_POLL_INTERVAL);
     }
 }
 
-// starting this straight from start() fires before the gateway/REST client
-// is actually up (required plugins boot very early), so the first request
-// can silently fail - the CONNECTION_OPEN subscription below covers that
-// case, but by the time this plugin starts (WebpackReady stage) the
-// gateway has usually already connected once, so that event has already
-// fired and won't come again until the next reconnect. try immediately
-// too so we're not just waiting on a reconnect that might not happen soon.
 function onDMPollConnectionOpen() {
     if (dmPollTimer) return;
     pollDMUnreads();
@@ -266,20 +225,12 @@ function stopDMUnreadPoll() {
 
 let originalWebSocket: typeof WebSocket | null = null;
 
-// the configured gateway host, not the literal "gateway." - a custom instance
-// is free to serve its gateway from any hostname, and matching on "gateway."
-// would leave this holding no socket at all on those
 function isGatewayUrl(url: string) {
     const gateway = getGatewayEndpoint();
     const host = gateway && parseUrl(gateway)?.host;
     return host ? url.includes(host) : url.includes("gateway.");
 }
 
-// spacebar's ActivitySchema requires album_id/artist_ids whenever $metadata
-// is present, but discord sends "metadata":{} on every custom status - that
-// fails validation and the gateway closes with 4002. drop metadata unless it
-// carries what the schema wants, which leaves real Spotify presence intact.
-// upstream bug: spacebarchat/server src/schemas/uncategorised/ActivitySchema.ts
 function sanitiseGatewayPayload(data: string) {
     if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
 
@@ -328,14 +279,6 @@ function uninstallGatewaySendSanitiser() {
     originalWebSocket = null;
 }
 
-// discord's cloud-upload attachment builder never renames the file for a
-// spoiler, it only sets `is_spoiler:true` - a field spacebar's schema never
-// added, which gets the whole message rejected with a 400. dropping the flag
-// alone used to "fix" the send but silently threw the spoiler marking away,
-// since spacebar (like every other spacebar client) only recognises the
-// SPOILER_ filename prefix. bake that prefix in ourselves before dropping
-// the flag, so the marking survives the trip through a schema that doesn't
-// know about it.
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 
 function stripIsSpoiler(body: string) {
@@ -365,13 +308,6 @@ function stripIsSpoiler(body: string) {
     }
 }
 
-// the video patch below replaces discord's real video component with a bare
-// <video> tag (to fix its src resolution against spacebar's CDN), which
-// drops that component's own spoiler handling along with everything else it
-// did. this rebuilds just the blur/reveal overlay, gated the same way
-// discord and every other spacebar client detect it: the SPOILER_ filename
-// prefix, since spacebar's attachment schema doesn't send the flags field
-// discord's own detection normally reads.
 function SpoilerVideoComponent({ src, maxWidth, maxHeight }: { src: string; maxWidth: number; maxHeight: number; }) {
     const [revealed, setRevealed] = useState(false);
 
@@ -402,11 +338,6 @@ function SpoilerVideoComponent({ src, maxWidth, maxHeight }: { src: string; maxW
 
 const SpoilerVideo = ErrorBoundary.wrap(SpoilerVideoComponent, { noop: true });
 
-// audio and generic file attachments never receive discord's own
-// getObscureReason check at all (their dispatch case doesn't pass it down),
-// so patching that classifier alone leaves them fully visible. wrap them the
-// same way as video: render discord's real component untouched, just cover
-// it with our own reveal overlay when the filename says spoiler.
 function SpoilerOverlayComponent({ children }: { children: ReactNode; }) {
     const [revealed, setRevealed] = useState(false);
 
@@ -461,9 +392,6 @@ export default definePlugin({
     required: true,
     settings,
 
-    // the GIF picker sends `url`, which on Klipy is the HTML page for the GIF,
-    // not the file itself - `gifSrc` is the real image. favourites only carry
-    // a usable file in `src`, except when it's the mp4/webm search preview.
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
         const withScheme = (url: string) => url.startsWith("//") ? `https:${url}` : url;
 
@@ -487,28 +415,12 @@ export default definePlugin({
         return <SpoilerOverlay>{node}</SpoilerOverlay>;
     },
 
-    // discord's own upload pipeline is a more reliable place to fix this than
-    // trying to catch the eventual network call: it runs once, synchronously,
-    // on the real CloudUpload object, before the REST client builds anything.
-    // baking the prefix in here and clearing .spoiler means is_spoiler never
-    // gets constructed in the first place, on every send path uploadFiles()
-    // covers, not just whichever one happens to call window.fetch directly.
     fixUploadSpoiler(upload: { filename: string; spoiler: boolean; }) {
         if (!upload.spoiler) return;
         if (!upload.filename.startsWith("SPOILER_")) upload.filename = "SPOILER_" + upload.filename;
         upload.spoiler = false;
     },
 
-    // fixUploadSpoiler above only catches spoiler being set before the
-    // presigned CDN url is requested, which happens almost immediately on
-    // attach - toggling the native spoiler button afterward doesn't rename
-    // anything, because that CDN filename is already permanent by then
-    // (spacebar looks the attachment up by it later and ignores whatever
-    // filename the send request claims). this reacts to the same toggle
-    // Discord's own remove/re-attach buttons use (UploadManager.remove +
-    // addFile, dispatching the exact actions those buttons dispatch) to
-    // redo the upload under the correct name instead of trying to hold or
-    // rename anything already in flight.
     flux: {
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
@@ -525,10 +437,6 @@ export default definePlugin({
             const newName = spoiler ? "SPOILER_" + file.name : file.name.replace(/^SPOILER_/, "");
             const renamedFile = new File([file], newName, { type: file.type });
 
-            // CloudUpload's constructor reads platform/compressionMetadata
-            // off this object, not just a bare File - reuse the original
-            // item wrapper and only swap the file it points to, instead of
-            // reconstructing a shape from scratch and risking a mismatch
             UploadManager.remove(channelId, id, draftType);
             UploadManager.addFile({
                 file: { ...upload.item, file: renamedFile },
@@ -577,9 +485,6 @@ export default definePlugin({
                 replace: "$&$1.forEach($self.fixUploadSpoiler);"
             }
         },
-        // must run before the API_ENDPOINT rewrite below, which would otherwise
-        // consume the window.GLOBAL_ENV.API_ENDPOINT this match anchors on and
-        // leave the patch silently doing nothing
         {
             find: "return\"https:\"+window.GLOBAL_ENV.API_ENDPOINT+(",
             replacement: {
@@ -773,10 +678,6 @@ export default definePlugin({
                     `case"VIDEO":case"CLIP":return $self.renderSpoilerVideo(${item},_||640,D||400)`
             }
         },
-        // audio, generic files, and plaintext previews never get discord's
-        // getObscureReason passed to their case at all, unlike image/video -
-        // wrap their (untouched) render output in our own overlay instead of
-        // chasing whichever internal classifier those components use.
         {
             find: 'case"AUDIO":return(0,',
             replacement: {
@@ -801,19 +702,6 @@ export default definePlugin({
                     `case"OTHER":return $self.wrapSpoiler(${item},${call})`
             }
         },
-        // spacebar's attachment schema never sends the `flags` field discord's
-        // spoiler detection is normally computed from. this feeds `item.spoiler`
-        // (composer/download-button UI), which isn't what actually decides
-        // whether a non-video attachment renders blurred - see the
-        // getObscureReason patch below for that. fall back to the SPOILER_
-        // filename prefix here too, same convention discord itself used to
-        // rely on and every spacebar client still does.
-        // the flags source here can be either the raw attachment or a
-        // wrapper item that nests it under `.originalItem` depending on call
-        // site - check both rather than assume one shape.
-        // "IS_SPOILER)" also occurs in the getObscureReason classifier below,
-        // with a different shape (no `spoiler:` prefix) - match correctly
-        // skips it, noWarn quiets the resulting "had no effect" here.
         {
             find: "IS_SPOILER)",
             replacement: {
@@ -822,16 +710,6 @@ export default definePlugin({
                 noWarn: true
             }
         },
-        // this is the function that gates the blur/reveal overlay for image
-        // attachments (video/audio/file are handled by the patches above
-        // instead, since their dispatch cases never call this at all). it
-        // reads the same missing `flags` field through a separate call path
-        // from the `spoiler:` property patched above, so fixing that one
-        // alone left image spoilers rendering fully visible despite the
-        // correct SPOILER_ filename. the destructured param is treated as the
-        // raw attachment inside this function, but the caller we found live
-        // passes the wrapper item instead - filename can be on either
-        // depending on call site, so check both.
         {
             find: "POTENTIAL_EXPLICIT_CONTENT",
             replacement: {
@@ -875,11 +753,6 @@ export default definePlugin({
                 replace: "$1$3($self.resolveGifUrl($2),"
             }
         },
-        // discord's settings-proto writer throws on an empty string in a
-        // uint64 field, uncaught, which stalls that store's whole save queue
-        // forever. spacebar's guild/onboarding gaps are what leave a field
-        // empty instead of discord's own literal "0" default - treat "" as
-        // zero, same as the existing "0" case one line above in the source.
         {
             find: "string is no integer",
             all: true,
