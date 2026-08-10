@@ -12,7 +12,7 @@ import { Logger } from "@utils/Logger";
 import { parseUrl } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findStoreLazy } from "@webpack";
-import { ChannelActions, ChannelStore, FluxDispatcher, GuildStore, MessageStore, RestAPI, RTCConnectionStore, SelectedChannelStore, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { ChannelStore, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, useState } from "@webpack/common";
 
 import { settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
@@ -172,71 +172,6 @@ function stopGuildOrderSync() {
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, schedulePush));
 }
 
-// after a forced reconnect, VoiceStateStore can still claim we're in a
-// channel while RTC is actually dead. cross-check against RTCConnectionStore
-// and force a real leave+rejoin when they disagree.
-
-// excludes transient states like CONNECTING/ICE_CHECKING/AUTHENTICATING.
-const DEAD_STATES = new Set(["DISCONNECTED", "RTC_DISCONNECTED", "NO_ROUTE"]);
-
-const GRACE_MS = 5000;
-const REJOIN_DELAY_MS = 1000; // selectVoiceChannel no-ops if called with the current channel
-
-let graceTimer: ReturnType<typeof setTimeout> | null = null;
-let recovering = false;
-
-function isPhantomVoiceState(): { channelId: string; } | null {
-    const me = UserStore.getCurrentUser();
-    if (!me) return null;
-
-    const myVoiceState = VoiceStateStore.getVoiceStateForUser(me.id);
-    if (!myVoiceState?.channelId) return null;
-
-    const rtcState: string = RTCConnectionStore.getState();
-    const rtcConnected: boolean = RTCConnectionStore.isConnected();
-
-    if (!rtcConnected && DEAD_STATES.has(rtcState)) {
-        return { channelId: myVoiceState.channelId };
-    }
-    return null;
-}
-
-function attemptVoiceRecovery() {
-    if (recovering) return;
-    const phantom = isPhantomVoiceState();
-    if (!phantom) return;
-
-    recovering = true;
-    const { channelId } = phantom;
-    logger.info(
-        `Voice state looks phantom (client thinks it's in ${channelId}, ` +
-        `RTC state is ${RTCConnectionStore.getState()}), forcing a real rejoin`
-    );
-
-    ChannelActions.selectVoiceChannel(null);
-    setTimeout(() => {
-        ChannelActions.selectVoiceChannel(channelId);
-        recovering = false;
-    }, REJOIN_DELAY_MS);
-}
-
-function onVoicePhantomCheckTrigger() {
-    if (graceTimer) clearTimeout(graceTimer);
-    graceTimer = setTimeout(attemptVoiceRecovery, GRACE_MS);
-}
-
-const VOICE_PHANTOM_EVENTS = ["CONNECTION_OPEN", "VOICE_CONNECTION_STATUS"];
-
-function startVoicePhantomFix() {
-    VOICE_PHANTOM_EVENTS.forEach(e => FluxDispatcher.subscribe(e, onVoicePhantomCheckTrigger));
-}
-
-function stopVoicePhantomFix() {
-    VOICE_PHANTOM_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, onVoicePhantomCheckTrigger));
-    if (graceTimer) clearTimeout(graceTimer);
-    recovering = false;
-}
-
 // harmony/fermo only populate DM unread state once, from the initial READY
 // payload - after that it depends entirely on MESSAGE_CREATE gateway events
 // for private channels. if one gets dropped, poll the DM channel list every
@@ -326,18 +261,11 @@ function stopDMUnreadPoll() {
     dmPollTimer = null;
 }
 
-// forces a fresh gateway reconnect when the tab returns from being
-// backgrounded long enough that a heartbeat ack was likely missed,
-// instead of waiting for Harmony's own 4009 timeout.
-
-let gatewaySocket: WebSocket | null = null;
-let hiddenSince: number | null = null;
 let originalWebSocket: typeof WebSocket | null = null;
-const HIDDEN_RECONNECT_THRESHOLD_MS = 30_000;
 
 // the configured gateway host, not the literal "gateway." - a custom instance
 // is free to serve its gateway from any hostname, and matching on "gateway."
-// left the watchdog holding no socket at all on those
+// would leave this holding no socket at all on those
 function isGatewayUrl(url: string) {
     const gateway = getGatewayEndpoint();
     const host = gateway && parseUrl(gateway)?.host;
@@ -373,15 +301,13 @@ function sanitiseGatewayPayload(data: string) {
     }
 }
 
-function installGatewaySocketCapture() {
+function installGatewaySendSanitiser() {
     if (originalWebSocket) return;
 
     const OriginalWebSocket = originalWebSocket = window.WebSocket;
     function PatchedWebSocket(this: unknown, url: string | URL, protocols?: string | string[]) {
         const ws = new OriginalWebSocket(url, protocols);
         if (isGatewayUrl(String(url))) {
-            gatewaySocket = ws;
-
             const send = ws.send.bind(ws);
             ws.send = data => send(typeof data === "string" ? sanitiseGatewayPayload(data) : data);
         }
@@ -392,29 +318,11 @@ function installGatewaySocketCapture() {
     window.WebSocket = PatchedWebSocket as unknown as typeof WebSocket;
 }
 
-function uninstallGatewaySocketCapture() {
+function uninstallGatewaySendSanitiser() {
     if (!originalWebSocket) return;
 
     window.WebSocket = originalWebSocket;
     originalWebSocket = null;
-    gatewaySocket = null;
-}
-
-function onVisibilityChange() {
-    if (document.hidden) {
-        hiddenSince = Date.now();
-        return;
-    }
-    if (hiddenSince && Date.now() - hiddenSince > HIDDEN_RECONNECT_THRESHOLD_MS) {
-        logger.info("Tab was backgrounded, forcing a reconnect ahead of a possible heartbeat timeout");
-        gatewaySocket?.close(4000, "ChangeEndpoint proactive reconnect");
-    }
-    hiddenSince = null;
-}
-
-function startHeartbeatWatchdog() {
-    installGatewaySocketCapture();
-    document.addEventListener("visibilitychange", onVisibilityChange);
 }
 
 // discord's cloud-upload attachment builder never renames the file for a
@@ -514,12 +422,6 @@ function uninstallFetchSanitiser() {
     originalFetch = null;
 }
 
-function stopHeartbeatWatchdog() {
-    document.removeEventListener("visibilitychange", onVisibilityChange);
-    uninstallGatewaySocketCapture();
-    hiddenSince = null;
-}
-
 export default definePlugin({
     name: "ChangeEndpoint",
     description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one).",
@@ -550,10 +452,9 @@ export default definePlugin({
 
     start() {
         startGuildOrderSync();
-        startVoicePhantomFix();
-        startHeartbeatWatchdog();
         startDMUnreadPoll();
         installFetchSanitiser();
+        installGatewaySendSanitiser();
 
         if (typeof DiscordNative === "undefined") return;
 
@@ -574,10 +475,9 @@ export default definePlugin({
 
     stop() {
         stopGuildOrderSync();
-        stopVoicePhantomFix();
-        stopHeartbeatWatchdog();
         stopDMUnreadPoll();
         uninstallFetchSanitiser();
+        uninstallGatewaySendSanitiser();
     },
 
     patches: [
@@ -782,11 +682,16 @@ export default definePlugin({
         // type (not just video) reads as never-spoilered. fall back to the
         // SPOILER_ filename prefix, same convention discord itself used to
         // rely on and every spacebar client still does.
+        // "IS_SPOILER)" also occurs in an unrelated NSFW/content-warning
+        // classifier with a different shape ((0,c.Lt)(n,N.sbO.IS_SPOILER),
+        // no `spoiler:` prefix) - match correctly skips it, noWarn quiets
+        // the resulting "had no effect" on that unrelated module.
         {
             find: "IS_SPOILER)",
             replacement: {
                 match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
-                replace: 'spoiler:$2.filename?.startsWith("SPOILER_")||$1'
+                replace: 'spoiler:$2.filename?.startsWith("SPOILER_")||$1',
+                noWarn: true
             }
         },
         {
