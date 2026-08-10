@@ -4,23 +4,19 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import "./style.css";
-
-import ErrorBoundary from "@components/ErrorBoundary";
-import { classNameFactory } from "@utils/css";
 import { Logger } from "@utils/Logger";
 import { parseUrl } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findStoreLazy } from "@webpack";
-import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, useState } from "@webpack/common";
+import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore } from "@webpack/common";
 import type { ReactNode } from "react";
 
 import { migrateVideoPlayerSetting, settings } from "./settings";
+import { DiscordSpoiler } from "./spoiler";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 import { CustomVideoPlayer } from "./videoPlayer";
 
 const logger = new Logger("ChangeEndpoint");
-const cl = classNameFactory("vc-changeendpoint-");
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
@@ -309,58 +305,6 @@ function stripIsSpoiler(body: string) {
     }
 }
 
-function SpoilerVideoComponent({ src, maxWidth, maxHeight, fileName, fileSizeBytes }: { src: string; maxWidth: number; maxHeight: number; fileName?: string; fileSizeBytes?: number; }) {
-    const [revealed, setRevealed] = useState(false);
-
-    return (
-        <div className={cl("spoiler-wrapper")}>
-            <div className={revealed ? undefined : cl("spoiler-video")}>
-                {settings.store.useChromiumVideoPlayer
-                    ? <video src={src} controls={revealed} preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />
-                    : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={fileName} fileSizeBytes={fileSizeBytes} />}
-            </div>
-            {!revealed && (
-                <div
-                    role="button"
-                    tabIndex={0}
-                    aria-label="Spoiler"
-                    className={cl("spoiler-overlay")}
-                    onClick={() => setRevealed(true)}
-                    onKeyDown={e => (e.key === "Enter" || e.key === " ") && setRevealed(true)}
-                >
-                    <span className={cl("spoiler-label")}>Spoiler</span>
-                </div>
-            )}
-        </div>
-    );
-}
-
-const SpoilerVideo = ErrorBoundary.wrap(SpoilerVideoComponent, { noop: true });
-
-function SpoilerOverlayComponent({ children }: { children: ReactNode; }) {
-    const [revealed, setRevealed] = useState(false);
-
-    return (
-        <div className={cl("spoiler-wrapper")}>
-            <div className={revealed ? undefined : cl("spoiler-content")}>{children}</div>
-            {!revealed && (
-                <div
-                    role="button"
-                    tabIndex={0}
-                    aria-label="Spoiler"
-                    className={cl("spoiler-overlay")}
-                    onClick={() => setRevealed(true)}
-                    onKeyDown={e => (e.key === "Enter" || e.key === " ") && setRevealed(true)}
-                >
-                    <span className={cl("spoiler-label")}>Spoiler</span>
-                </div>
-            )}
-        </div>
-    );
-}
-
-const SpoilerOverlay = ErrorBoundary.wrap(SpoilerOverlayComponent, { noop: true });
-
 let originalFetch: typeof fetch | null = null;
 
 function installFetchSanitiser() {
@@ -401,19 +345,16 @@ export default definePlugin({
 
     renderSpoilerVideo(item: { originalItem?: { url?: string; filename?: string; size?: number; }; downloadUrl?: string; }, maxWidth: number, maxHeight: number) {
         const src = item.originalItem?.url ?? item.downloadUrl ?? "";
+        const video = settings.store.useChromiumVideoPlayer
+            ? <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />
+            : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />;
 
-        if (!item.originalItem?.filename?.startsWith("SPOILER_")) {
-            return settings.store.useChromiumVideoPlayer
-                ? <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />
-                : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />;
-        }
-
-        return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />;
+        return this.wrapSpoiler(item, video);
     },
 
     wrapSpoiler(item: { originalItem?: { filename?: string; }; }, node: ReactNode) {
         if (!item.originalItem?.filename?.startsWith("SPOILER_")) return node;
-        return <SpoilerOverlay>{node}</SpoilerOverlay>;
+        return <DiscordSpoiler>{node}</DiscordSpoiler>;
     },
 
     fixUploadSpoiler(upload: { filename: string; spoiler: boolean; }) {
