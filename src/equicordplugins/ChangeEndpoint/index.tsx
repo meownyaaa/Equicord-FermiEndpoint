@@ -55,6 +55,18 @@ function stripNullIds(folders: HarmonyGuildFolder[]) {
     return folders.map(({ id, ...rest }) => (id == null ? rest : { id, ...rest }));
 }
 
+// the server round-trips these fields in its own key order (id, name, color,
+// guild_ids), not the order we sent them in, so comparing JSON.stringify of
+// what we pushed against JSON.stringify of what a poll reads back always
+// differs even when nothing actually changed. That made every single poll
+// look like a remote change and re-run applyGuildOrder, which re-creates
+// folders that already exist - createGuildFolderLocal isn't idempotent for
+// that, and it has been observed dropping a guild out of a real folder.
+// Comparing arrays (positional, not keyed) sidesteps key order entirely.
+function folderSignature(folders: Array<{ id?: number | null; name?: string | null; color?: number | null; guild_ids: string[]; }>) {
+    return JSON.stringify(folders.map(f => [f.id ?? null, f.name ?? null, f.color ?? null, f.guild_ids]));
+}
+
 async function pushGuildOrder() {
     try {
         const guild_folders = stripNullIds(toHarmonyFolders());
@@ -62,7 +74,7 @@ async function pushGuildOrder() {
             url: "/users/@me/settings",
             body: { guild_folders }
         });
-        lastSignature = JSON.stringify(guild_folders);
+        lastSignature = folderSignature(guild_folders);
     } catch (e) {
         logger.error("Failed to push guild order", e);
     }
@@ -91,6 +103,12 @@ function applyGuildOrder(folders: HarmonyGuildFolder[]) {
         return false;
     }
 
+    // createGuildFolderLocal isn't idempotent: calling it again for a guild
+    // set that's already exactly one existing folder doesn't just no-op, it
+    // can drop a guild out of that folder. Skip folders that already exist.
+    const existingFolderSets = SortedGuildStore.getGuildFolders()
+        .map((f: any) => new Set(f.guildIds as string[]));
+
     let anchor: string | null = null;
 
     applyingGuildOrder = true;
@@ -100,7 +118,8 @@ function applyGuildOrder(folders: HarmonyGuildFolder[]) {
             if (!ids.length) continue;
 
             if (ids.length > 1) {
-                GuildActionCreators.createGuildFolderLocal(ids, folder.name ?? null);
+                const alreadyExists = existingFolderSets.some(set => set.size === ids.length && ids.every(id => set.has(id)));
+                if (!alreadyExists) GuildActionCreators.createGuildFolderLocal(ids, folder.name ?? null);
             } else if (anchor) {
                 GuildActionCreators.moveById(ids[0], anchor, true, false);
             }
@@ -118,7 +137,7 @@ async function pollSavedGuildOrder() {
     try {
         const res = await RestAPI.get({ url: "/users/@me/settings" });
         const folders: HarmonyGuildFolder[] = res?.body?.guild_folders ?? [];
-        const signature = JSON.stringify(folders);
+        const signature = folderSignature(folders);
 
         if (folders.length && signature !== lastSignature) {
             logger.info("Applying updated guild order from server");
