@@ -401,12 +401,12 @@ export default definePlugin({
         return item.url;
     },
 
-    renderSpoilerVideo(item: { originalItem?: { url?: string; filename?: string; }; downloadUrl?: string; }, maxWidth: number, maxHeight: number) {
+    renderSpoilerVideo(item: { originalItem?: { url?: string; filename?: string; size?: number; }; downloadUrl?: string; }, maxWidth: number, maxHeight: number) {
         const src = item.originalItem?.url ?? item.downloadUrl ?? "";
 
         if (!item.originalItem?.filename?.startsWith("SPOILER_")) {
             return settings.store.useNativeVideoPlayer
-                ? <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} />
+                ? <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />
                 : <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />;
         }
 
