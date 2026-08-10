@@ -12,7 +12,7 @@ import { Logger } from "@utils/Logger";
 import { parseUrl } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findStoreLazy } from "@webpack";
-import { ChannelStore, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, useState } from "@webpack/common";
+import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, useState } from "@webpack/common";
 import type { ReactNode } from "react";
 
 import { settings } from "./settings";
@@ -26,6 +26,8 @@ const cl = classNameFactory("vc-changeendpoint-");
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
+const UploadManager = findByPropsLazy("clearAll", "addFile");
+const UploadAttachmentStore = findByPropsLazy("getUploadCount");
 
 interface HarmonyGuildFolder {
     id: number | null;
@@ -495,6 +497,37 @@ export default definePlugin({
         if (!upload.spoiler) return;
         if (!upload.filename.startsWith("SPOILER_")) upload.filename = "SPOILER_" + upload.filename;
         upload.spoiler = false;
+    },
+
+    // fixUploadSpoiler above only catches spoiler being set before the
+    // presigned CDN url is requested, which happens almost immediately on
+    // attach - toggling the native spoiler button afterward doesn't rename
+    // anything, because that CDN filename is already permanent by then
+    // (spacebar looks the attachment up by it later and ignores whatever
+    // filename the send request claims). this reacts to the same toggle
+    // Discord's own remove/re-attach buttons use (UploadManager.remove +
+    // addFile, dispatching the exact actions those buttons dispatch) to
+    // redo the upload under the correct name instead of trying to hold or
+    // rename anything already in flight.
+    flux: {
+        UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
+            if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
+
+            const upload = UploadAttachmentStore.getUpload(channelId, id, draftType);
+            if (!upload?.uploadedFilename) return;
+
+            const hasPrefix: boolean = upload.filename.startsWith("SPOILER_");
+            if (spoiler === hasPrefix) return;
+
+            const file = upload.item?.file;
+            if (!file) return;
+
+            const newName = spoiler ? "SPOILER_" + file.name : file.name.replace(/^SPOILER_/, "");
+            const renamedFile = new File([file], newName, { type: file.type });
+
+            UploadManager.remove(channelId, id, draftType);
+            UploadManager.addFile({ file: renamedFile, channelId, draftType });
+        }
     },
 
     start() {
