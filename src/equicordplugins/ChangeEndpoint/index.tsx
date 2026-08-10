@@ -26,6 +26,7 @@ const cl = classNameFactory("vc-changeendpoint-");
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
+const UploadAttachmentStore = findByPropsLazy("getUploadCount");
 
 interface HarmonyGuildFolder {
     id: number | null;
@@ -334,7 +335,7 @@ function uninstallGatewaySendSanitiser() {
 // SPOILER_ filename prefix. bake that prefix in ourselves before dropping
 // the flag, so the marking survives the trip through a schema that doesn't
 // know about it.
-const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
+const MESSAGE_URL_RE = /\/channels\/(\d+)\/messages(?:\/\d+)?$/;
 
 function stripIsSpoiler(body: string) {
     if (!body.includes('"is_spoiler"')) return body;
@@ -429,16 +430,167 @@ function SpoilerOverlayComponent({ children }: { children: ReactNode; }) {
 
 const SpoilerOverlay = ErrorBoundary.wrap(SpoilerOverlayComponent, { noop: true });
 
+// discord requests a presigned CDN upload url for each attachment almost
+// immediately on attach - well before a user can realistically toggle
+// spoiler afterward. spacebar locks the resulting filename in permanently
+// at that step: the message-create request's own filename field is ignored
+// entirely server-side (confirmed against spacebar's source - it looks the
+// attachment up by uploaded_filename and uses the name captured back at
+// upload-request time). holding this request until the message actually
+// sends is the only way to get the final spoiler state into it in time.
+const ATTACHMENT_REQUEST_URL_RE = /\/channels\/(\d+)\/attachments$/;
+const CDN_ATTACHMENT_PUT_RE = /\/attachments\//;
+
+interface TrackedXhr extends XMLHttpRequest {
+    __ceMethod?: string;
+    __ceUrl?: string;
+}
+
+interface HeldAttachmentFile {
+    filename: string;
+    file_size: number;
+}
+
+let originalXhrOpen: typeof XMLHttpRequest.prototype.open | null = null;
+let originalXhrSend: typeof XMLHttpRequest.prototype.send | null = null;
+const heldAttachmentRequests = new Map<XMLHttpRequest, { channelId: string; files: HeldAttachmentFile[]; release: () => void; }>();
+const putCompletions = new Map<string, { done: boolean; waiters: (() => void)[]; }>();
+
+function markPutCompletion(url: string, xhr: XMLHttpRequest) {
+    let state = putCompletions.get(url);
+    if (!state) {
+        state = { done: false, waiters: [] };
+        putCompletions.set(url, state);
+    }
+    const finalState = state;
+    xhr.addEventListener("loadend", () => {
+        finalState.done = true;
+        finalState.waiters.forEach(w => w());
+        finalState.waiters = [];
+    }, { once: true });
+}
+
+function waitForPutCompletion(url: string): Promise<void> {
+    return new Promise(resolve => {
+        const state = putCompletions.get(url);
+        if (state?.done) {
+            resolve();
+            return;
+        }
+        if (state) state.waiters.push(resolve);
+        else putCompletions.set(url, { done: false, waiters: [resolve] });
+        setTimeout(resolve, 30_000);
+    });
+}
+
+function installUploadHoldTrap() {
+    if (originalXhrOpen) return;
+
+    const OriginalOpen = originalXhrOpen = XMLHttpRequest.prototype.open;
+    const OriginalSend = originalXhrSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (this: TrackedXhr, method: string, url: string | URL, ...rest: unknown[]) {
+        this.__ceMethod = method;
+        this.__ceUrl = String(url);
+        return (OriginalOpen as (...args: unknown[]) => void).apply(this, [method, url, ...rest]);
+    } as typeof XMLHttpRequest.prototype.open;
+
+    XMLHttpRequest.prototype.send = function (this: TrackedXhr, body?: Document | XMLHttpRequestBodyInit | null) {
+        if (this.__ceMethod === "POST" && this.__ceUrl && typeof body === "string") {
+            const match = new URL(this.__ceUrl, location.origin).pathname.match(ATTACHMENT_REQUEST_URL_RE);
+            if (match) {
+                let parsed: { files: HeldAttachmentFile[]; } | null = null;
+                try { parsed = JSON.parse(body); } catch { parsed = null; }
+                if (parsed?.files) {
+                    heldAttachmentRequests.set(this, {
+                        channelId: match[1],
+                        files: parsed.files,
+                        release: () => OriginalSend.call(this, JSON.stringify(parsed))
+                    });
+                    return;
+                }
+            }
+        }
+
+        if (this.__ceMethod === "PUT" && this.__ceUrl && CDN_ATTACHMENT_PUT_RE.test(this.__ceUrl)) {
+            markPutCompletion(this.__ceUrl, this);
+        }
+
+        return OriginalSend.call(this, body);
+    } as typeof XMLHttpRequest.prototype.send;
+}
+
+function uninstallUploadHoldTrap() {
+    if (!originalXhrOpen) return;
+    XMLHttpRequest.prototype.open = originalXhrOpen;
+    XMLHttpRequest.prototype.send = originalXhrSend!;
+    originalXhrOpen = null;
+    originalXhrSend = null;
+    heldAttachmentRequests.clear();
+    putCompletions.clear();
+}
+
+// draft type 0 is ChannelMessage, the only kind of draft the send-time
+// patches in this plugin deal with
+const CHANNEL_MESSAGE_DRAFT_TYPE = 0;
+
+async function releaseHeldUploadsForChannel(channelId: string) {
+    const held = [...heldAttachmentRequests.entries()].filter(([, v]) => v.channelId === channelId);
+    if (!held.length) return;
+
+    const liveUploads: { filename: string; spoiler: boolean; currentSize?: number; }[] =
+        UploadAttachmentStore.getUploads(channelId, CHANNEL_MESSAGE_DRAFT_TYPE) ?? [];
+
+    await Promise.all(held.map(async ([xhr, entry]) => {
+        heldAttachmentRequests.delete(xhr);
+
+        // an attachment removed from the composer before send has no live
+        // upload left to match - drop the held request instead of sending an
+        // orphaned upload nobody asked for anymore
+        const stillAttached = entry.files.some(file => liveUploads.some(u =>
+            u.currentSize === file.file_size &&
+            (u.filename === file.filename || u.filename === "SPOILER_" + file.filename)
+        ));
+        if (!stillAttached) return;
+
+        for (const file of entry.files) {
+            const live = liveUploads.find(u =>
+                u.currentSize === file.file_size &&
+                (u.filename === file.filename || u.filename === "SPOILER_" + file.filename)
+            );
+            if (live?.spoiler && !file.filename.startsWith("SPOILER_")) {
+                file.filename = "SPOILER_" + file.filename;
+            }
+        }
+
+        const responseText = await new Promise<string>((resolve, reject) => {
+            xhr.addEventListener("loadend", () => resolve(xhr.responseText), { once: true });
+            xhr.addEventListener("error", () => reject(new Error("attachment upload request failed")), { once: true });
+            entry.release();
+        });
+
+        let uploadUrl: string | undefined;
+        try {
+            uploadUrl = JSON.parse(responseText)?.attachments?.[0]?.upload_url;
+        } catch {
+            // nothing to wait for if the response wasn't the shape we expected
+        }
+        if (uploadUrl) await waitForPutCompletion(uploadUrl);
+    }));
+}
+
 let originalFetch: typeof fetch | null = null;
 
 function installFetchSanitiser() {
     if (originalFetch) return;
 
     const OriginalFetch = originalFetch = window.fetch;
-    window.fetch = (input, init) => {
+    window.fetch = async (input, init) => {
         if (init && (init.method === "POST" || init.method === "PATCH") && typeof init.body === "string") {
             const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-            if (MESSAGE_URL_RE.test(new URL(url, location.origin).pathname)) {
+            const match = new URL(url, location.origin).pathname.match(MESSAGE_URL_RE);
+            if (match) {
+                await releaseHeldUploadsForChannel(match[1]);
                 init = { ...init, body: stripIsSpoiler(init.body) };
             }
         }
@@ -500,6 +652,7 @@ export default definePlugin({
     start() {
         startGuildOrderSync();
         startDMUnreadPoll();
+        installUploadHoldTrap();
         installFetchSanitiser();
         installGatewaySendSanitiser();
 
@@ -523,6 +676,7 @@ export default definePlugin({
     stop() {
         stopGuildOrderSync();
         stopDMUnreadPoll();
+        uninstallUploadHoldTrap();
         uninstallFetchSanitiser();
         uninstallGatewaySendSanitiser();
     },
