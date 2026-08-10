@@ -15,7 +15,7 @@ import { findByPropsLazy, findStoreLazy } from "@webpack";
 import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, useState } from "@webpack/common";
 import type { ReactNode } from "react";
 
-import { settings } from "./settings";
+import { migrateVideoPlayerSetting, settings } from "./settings";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 import { CustomVideoPlayer } from "./videoPlayer";
 
@@ -405,9 +405,9 @@ export default definePlugin({
         const src = item.originalItem?.url ?? item.downloadUrl ?? "";
 
         if (!item.originalItem?.filename?.startsWith("SPOILER_")) {
-            return settings.store.useNativeVideoPlayer
-                ? <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />
-                : <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />;
+            return settings.store.useChromiumVideoPlayer
+                ? <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />
+                : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />;
         }
 
         return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} />;
@@ -451,6 +451,7 @@ export default definePlugin({
     },
 
     start() {
+        migrateVideoPlayerSetting();
         startGuildOrderSync();
         startDMUnreadPoll();
         installFetchSanitiser();

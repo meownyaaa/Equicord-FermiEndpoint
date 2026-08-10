@@ -4,13 +4,21 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { definePluginSettings } from "@api/Settings";
+import { definePluginSettings, Settings } from "@api/Settings";
 import { localStorage } from "@utils/localStorage";
 import { Logger } from "@utils/Logger";
 import { OptionType } from "@utils/types";
 import { Alerts, Button, Toasts } from "@webpack/common";
 
 const logger = new Logger("ChangeEndpoint");
+
+export function migrateVideoPlayerSetting() {
+    const s = Settings.plugins.ChangeEndpoint as { useNativeVideoPlayer?: boolean; useChromiumVideoPlayer?: boolean; };
+    if (Object.hasOwn(s, "useNativeVideoPlayer") && !Object.hasOwn(s, "useChromiumVideoPlayer")) {
+        s.useChromiumVideoPlayer = !s.useNativeVideoPlayer;
+        delete s.useNativeVideoPlayer;
+    }
+}
 
 const isOurs = (name: string) => name.startsWith("Vencord") || name.startsWith("Equicord");
 
@@ -140,12 +148,11 @@ export const settings = definePluginSettings({
         hidden: () => !isAdvanced(),
         isValid: required
     },
-    useNativeVideoPlayer: {
+    useChromiumVideoPlayer: {
         type: OptionType.BOOLEAN,
-        description: "Use a custom Discord-styled video player (play/pause, seek bar, volume, fullscreen) for " +
-            "attachments instead of a plain HTML5 video element with the browser's default controls. Discord's " +
-            "actual built-in player depends on server-side video processing Spacebar instances don't provide, " +
-            "so this plugin never uses it - this toggle only picks between the plain element and this custom one.",
+        description: "Use a plain HTML5 video element with the browser's default controls for attachments " +
+            "instead of Discord's real video player component. Discord's player is the default since it looks " +
+            "and behaves like the genuine client, but turn this on if it ever misbehaves on your instance's video URLs.",
         default: false,
         restartNeeded: true
     },
