@@ -417,11 +417,14 @@ function startHeartbeatWatchdog() {
     document.addEventListener("visibilitychange", onVisibilityChange);
 }
 
-// discord still sends `is_spoiler` on cloud-uploaded message attachments,
-// but spacebar's schema never added that field and rejects the whole
-// message with a 400 the moment it's present. spoiler status already lives
-// in the attachment's SPOILER_ filename prefix, so dropping the flag loses
-// nothing - it just stops the send from being rejected outright.
+// discord's cloud-upload attachment builder never renames the file for a
+// spoiler, it only sets `is_spoiler:true` - a field spacebar's schema never
+// added, which gets the whole message rejected with a 400. dropping the flag
+// alone used to "fix" the send but silently threw the spoiler marking away,
+// since spacebar (like every other spacebar client) only recognises the
+// SPOILER_ filename prefix. bake that prefix in ourselves before dropping
+// the flag, so the marking survives the trip through a schema that doesn't
+// know about it.
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 
 function stripIsSpoiler(body: string) {
@@ -434,6 +437,9 @@ function stripIsSpoiler(body: string) {
         let changed = false;
         for (const attachment of payload.attachments) {
             if (attachment && "is_spoiler" in attachment) {
+                if (attachment.is_spoiler && typeof attachment.filename === "string" && !attachment.filename.startsWith("SPOILER_")) {
+                    attachment.filename = "SPOILER_" + attachment.filename;
+                }
                 delete attachment.is_spoiler;
                 changed = true;
             }
@@ -441,7 +447,7 @@ function stripIsSpoiler(body: string) {
 
         if (!changed) return body;
 
-        logger.debug("stripped is_spoiler from a message attachment, spacebar doesn't support that field");
+        logger.debug("moved is_spoiler to a SPOILER_ filename prefix, spacebar doesn't support that field");
         return JSON.stringify(payload);
     } catch {
         return body;
