@@ -679,27 +679,11 @@ export default definePlugin({
             }
         },
         {
-            find: "posterUrl:a.toString(),channelId:e.message.channel_id",
+            find: 'a.searchParams.append("format","webp"),i)',
             predicate: () => settings.store.useNativeVideoPlayer,
             replacement: {
-                match: /posterUrl:a\.toString\(\),channelId:e\.message\.channel_id/,
-                replace: "posterUrl:void 0,channelId:e.message.channel_id"
-            }
-        },
-        {
-            find: "attachmentProps:e,posterUrl:a.toString()",
-            predicate: () => settings.store.useNativeVideoPlayer,
-            replacement: {
-                match: /attachmentProps:e,posterUrl:a\.toString\(\)/,
-                replace: "attachmentProps:e,posterUrl:void 0"
-            }
-        },
-        {
-            find: "x(e,a.toString())",
-            predicate: () => settings.store.useNativeVideoPlayer,
-            replacement: {
-                match: /x\(e,a\.toString\(\)\)/,
-                replace: "x(e,void 0)"
+                match: /a\.searchParams\.append\("format","webp"\),i\)/,
+                replace: "i)"
             }
         },
         {
