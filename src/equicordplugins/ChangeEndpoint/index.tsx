@@ -309,18 +309,16 @@ function stripIsSpoiler(body: string) {
     }
 }
 
-function SpoilerVideoComponent({ src, maxWidth, maxHeight }: { src: string; maxWidth: number; maxHeight: number; }) {
+function SpoilerVideoComponent({ src, maxWidth, maxHeight, fileName, fileSizeBytes }: { src: string; maxWidth: number; maxHeight: number; fileName?: string; fileSizeBytes?: number; }) {
     const [revealed, setRevealed] = useState(false);
 
     return (
         <div className={cl("spoiler-wrapper")}>
-            <video
-                src={src}
-                controls={revealed}
-                preload="metadata"
-                className={revealed ? undefined : cl("spoiler-video")}
-                style={{ maxWidth, maxHeight, width: "100%" }}
-            />
+            <div className={revealed ? undefined : cl("spoiler-video")}>
+                {settings.store.useChromiumVideoPlayer
+                    ? <video src={src} controls={revealed} preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />
+                    : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={fileName} fileSizeBytes={fileSizeBytes} />}
+            </div>
             {!revealed && (
                 <div
                     role="button"
@@ -410,7 +408,7 @@ export default definePlugin({
                 : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />;
         }
 
-        return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} />;
+        return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />;
     },
 
     wrapSpoiler(item: { originalItem?: { filename?: string; }; }, node: ReactNode) {
