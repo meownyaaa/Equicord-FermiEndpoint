@@ -697,20 +697,35 @@ export default definePlugin({
             }
         },
         // spacebar's attachment schema never sends the `flags` field discord's
-        // spoiler detection is normally computed from, so every attachment
-        // type (not just video) reads as never-spoilered. fall back to the
-        // SPOILER_ filename prefix, same convention discord itself used to
+        // spoiler detection is normally computed from. this feeds `item.spoiler`
+        // (composer/download-button UI), which isn't what actually decides
+        // whether a non-video attachment renders blurred - see the
+        // getObscureReason patch below for that. fall back to the SPOILER_
+        // filename prefix here too, same convention discord itself used to
         // rely on and every spacebar client still does.
-        // "IS_SPOILER)" also occurs in an unrelated NSFW/content-warning
-        // classifier with a different shape ((0,c.Lt)(n,N.sbO.IS_SPOILER),
-        // no `spoiler:` prefix) - match correctly skips it, noWarn quiets
-        // the resulting "had no effect" on that unrelated module.
+        // "IS_SPOILER)" also occurs in the getObscureReason classifier below,
+        // with a different shape (no `spoiler:` prefix) - match correctly
+        // skips it, noWarn quiets the resulting "had no effect" here.
         {
             find: "IS_SPOILER)",
             replacement: {
                 match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
                 replace: 'spoiler:$2.filename?.startsWith("SPOILER_")||$1',
                 noWarn: true
+            }
+        },
+        // this is the function that actually gates the blur/reveal overlay for
+        // image, audio, and generic file attachments (video has its own
+        // component, replaced entirely by the patch above). it reads the same
+        // missing `flags` field through a separate call path from the `spoiler:`
+        // property patched above, so fixing that one alone left every non-video
+        // spoiler rendering fully visible despite the correct SPOILER_ filename.
+        {
+            find: "POTENTIAL_EXPLICIT_CONTENT",
+            replacement: {
+                match: /function \i\((\i),\i\)\{let\{flags:\i=0\}=\1,.{0,150}?(\(0,\i\.\i\)\(\i,\i\.\i\.IS_SPOILER\))\?/,
+                replace: (match: string, param: string, flagCheck: string) =>
+                    match.replace(flagCheck, `(${param}.filename?.startsWith("SPOILER_")||${flagCheck})`)
             }
         },
         {
