@@ -450,6 +450,18 @@ export default definePlugin({
         return <SpoilerVideo src={src} maxWidth={maxWidth} maxHeight={maxHeight} />;
     },
 
+    // discord's own upload pipeline is a more reliable place to fix this than
+    // trying to catch the eventual network call: it runs once, synchronously,
+    // on the real CloudUpload object, before the REST client builds anything.
+    // baking the prefix in here and clearing .spoiler means is_spoiler never
+    // gets constructed in the first place, on every send path uploadFiles()
+    // covers, not just whichever one happens to call window.fetch directly.
+    fixUploadSpoiler(upload: { filename: string; spoiler: boolean; }) {
+        if (!upload.spoiler) return;
+        if (!upload.filename.startsWith("SPOILER_")) upload.filename = "SPOILER_" + upload.filename;
+        upload.spoiler = false;
+    },
+
     start() {
         startGuildOrderSync();
         startDMUnreadPoll();
@@ -481,6 +493,13 @@ export default definePlugin({
     },
 
     patches: [
+        {
+            find: "async uploadFiles(",
+            replacement: {
+                match: /async uploadFiles\((\i)\){/,
+                replace: "$&$1.forEach($self.fixUploadSpoiler);"
+            }
+        },
         // must run before the API_ENDPOINT rewrite below, which would otherwise
         // consume the window.GLOBAL_ENV.API_ENDPOINT this match anchors on and
         // leave the patch silently doing nothing
