@@ -525,8 +525,17 @@ export default definePlugin({
             const newName = spoiler ? "SPOILER_" + file.name : file.name.replace(/^SPOILER_/, "");
             const renamedFile = new File([file], newName, { type: file.type });
 
+            // CloudUpload's constructor reads platform/compressionMetadata
+            // off this object, not just a bare File - reuse the original
+            // item wrapper and only swap the file it points to, instead of
+            // reconstructing a shape from scratch and risking a mismatch
             UploadManager.remove(channelId, id, draftType);
-            UploadManager.addFile({ file: renamedFile, channelId, draftType });
+            UploadManager.addFile({
+                file: { ...upload.item, file: renamedFile },
+                channelId,
+                draftType,
+                allowOptimization: upload.allowOptimization
+            });
         }
     },
 
