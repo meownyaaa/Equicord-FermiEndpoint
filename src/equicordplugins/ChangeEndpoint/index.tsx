@@ -88,10 +88,10 @@ function applyGuildOrder(folders: HarmonyGuildFolder[]) {
         return false;
     }
 
-    const existingFolderSets = SortedGuildStore.getGuildFolders()
-        .map((f: any) => new Set(f.guildIds as string[]));
+    const findFolder = (ids: string[]) => (SortedGuildStore.getGuildFolders() as Array<{ folderId: number | null; guildIds: string[]; }>)
+        .find(f => f.guildIds.length === ids.length && ids.every(id => f.guildIds.includes(id)));
 
-    let anchor: string | null = null;
+    let anchor: string | number | null = null;
 
     applyingGuildOrder = true;
     try {
@@ -100,13 +100,16 @@ function applyGuildOrder(folders: HarmonyGuildFolder[]) {
             if (!ids.length) continue;
 
             if (ids.length > 1) {
-                const alreadyExists = existingFolderSets.some(set => set.size === ids.length && ids.every(id => set.has(id)));
-                if (!alreadyExists) GuildActionCreators.createGuildFolderLocal(ids, folder.name ?? null);
-            } else if (anchor) {
-                GuildActionCreators.moveById(ids[0], anchor, true, false);
+                let match = findFolder(ids);
+                if (!match) {
+                    GuildActionCreators.createGuildFolderLocal(ids, folder.name ?? null);
+                    match = findFolder(ids);
+                }
+                anchor = match?.folderId ?? ids[ids.length - 1];
+            } else {
+                if (anchor != null) GuildActionCreators.moveById(ids[0], anchor, true, false);
+                anchor = ids[0];
             }
-
-            anchor = ids[ids.length - 1];
         }
     } finally {
         applyingGuildOrder = false;
