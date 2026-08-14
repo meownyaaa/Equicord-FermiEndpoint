@@ -30,6 +30,14 @@ interface HarmonyGuildFolder {
     color: number | null;
 }
 
+interface ColorRole {
+    id: string;
+    guildId: string;
+    color: number;
+    colorString: string | null;
+    colorStrings: { primaryColor: string; secondaryColor: string | null; tertiaryColor: string | null; } | null;
+}
+
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSignature: string | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -366,6 +374,11 @@ export default definePlugin({
         upload.spoiler = false;
     },
 
+    getEveryoneColorRole(guildRoles: Record<string, ColorRole>) {
+        const everyone = Object.values(guildRoles).find(r => r.id === r.guildId);
+        return everyone && everyone.color > 0 ? everyone : undefined;
+    },
+
     flux: {
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
@@ -538,6 +551,21 @@ export default definePlugin({
             replacement: {
                 match: /\w+\.features\.has\(\w+\.GuildFeatures\.ENHANCED_ROLE_COLORS\)/g,
                 replace: "true"
+            }
+        },
+        {
+            find: "colorRoleId:void 0,hoistRoleId:void 0",
+            replacement: {
+                match: /function \i\((\i),(\i)\)\{let (\i),(\i),(\i),(\i);if\(0===\2\.length\)return\{colorString:null,colorStrings:null,colorRoleId:void 0,hoistRoleId:void 0,iconRoleId:void 0,highestRoleId:void 0\};.{0,280}?return\{colorString:\3\?\.colorString\?\?null,colorStrings:\3\?\.colorStrings\?\?null,colorRoleId:\3\?\.id,iconRoleId:\5\?\.id,hoistRoleId:\4\?\.id,highestRoleId:\6\?\.id\}\}/,
+                replace: (match: string, e: string, t: string, n: string, i: string, r: string, a: string) => match
+                    .replace(
+                        `if(0===${t}.length)return{colorString:null,colorStrings:null,colorRoleId:void 0,hoistRoleId:void 0,iconRoleId:void 0,highestRoleId:void 0}`,
+                        `if(0===${t}.length)return(${n}=>({colorString:${n}?.colorString??null,colorStrings:${n}?.colorStrings??null,colorRoleId:${n}?.id,hoistRoleId:void 0,iconRoleId:void 0,highestRoleId:void 0}))($self.getEveryoneColorRole(${e}))`
+                    )
+                    .replace(
+                        `return{colorString:${n}?.colorString??null,colorStrings:${n}?.colorStrings??null,colorRoleId:${n}?.id,iconRoleId:${r}?.id,hoistRoleId:${i}?.id,highestRoleId:${a}?.id}}`,
+                        `return{colorString:(${n}??=$self.getEveryoneColorRole(${e}))?.colorString??null,colorStrings:${n}?.colorStrings??null,colorRoleId:${n}?.id,iconRoleId:${r}?.id,hoistRoleId:${i}?.id,highestRoleId:${a}?.id}}`
+                    )
             }
         },
         {
