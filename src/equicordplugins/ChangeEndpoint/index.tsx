@@ -231,7 +231,7 @@ function stopDMUnreadPoll() {
     dmPollTimer = null;
 }
 
-let originalWebSocket: typeof WebSocket | null = null;
+let originalSend: typeof WebSocket.prototype.send | null = null;
 
 function isGatewayUrl(url: string) {
     const gateway = getGatewayEndpoint();
@@ -249,7 +249,7 @@ function sanitiseGatewayPayload(data: string) {
         let changed = false;
         for (const activity of payload.d.activities) {
             const meta = activity?.metadata;
-            if (!meta || (meta.album_id != null && meta.artist_ids != null)) continue;
+            if (!meta || (meta.album_id && meta.artist_ids)) continue;
             delete activity.metadata;
             changed = true;
         }
@@ -264,27 +264,24 @@ function sanitiseGatewayPayload(data: string) {
 }
 
 function installGatewaySendSanitiser() {
-    if (originalWebSocket) return;
+    if (originalSend) return;
 
-    const OriginalWebSocket = originalWebSocket = window.WebSocket;
-    function PatchedWebSocket(this: unknown, url: string | URL, protocols?: string | string[]) {
-        const ws = new OriginalWebSocket(url, protocols);
-        if (isGatewayUrl(String(url))) {
-            const send = ws.send.bind(ws);
-            ws.send = data => send(typeof data === "string" ? sanitiseGatewayPayload(data) : data);
-        }
-        return ws;
-    }
-    PatchedWebSocket.prototype = OriginalWebSocket.prototype;
-    Object.setPrototypeOf(PatchedWebSocket, OriginalWebSocket);
-    window.WebSocket = PatchedWebSocket as unknown as typeof WebSocket;
+    // patch the shared prototype method instead of window.WebSocket, since discord
+    // may cache its own constructor reference and never see a swapped-out global
+    originalSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (this: WebSocket, data: any) {
+        const payload = typeof data === "string" && isGatewayUrl(this.url)
+            ? sanitiseGatewayPayload(data)
+            : data;
+        return originalSend!.call(this, payload);
+    };
 }
 
 function uninstallGatewaySendSanitiser() {
-    if (!originalWebSocket) return;
+    if (!originalSend) return;
 
-    window.WebSocket = originalWebSocket;
-    originalWebSocket = null;
+    WebSocket.prototype.send = originalSend;
+    originalSend = null;
 }
 
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
