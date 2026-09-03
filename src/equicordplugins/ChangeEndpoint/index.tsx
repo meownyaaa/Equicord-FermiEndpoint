@@ -7,7 +7,7 @@
 import { Logger } from "@utils/Logger";
 import { parseUrl } from "@utils/misc";
 import definePlugin from "@utils/types";
-import { findByPropsLazy, findStoreLazy } from "@webpack";
+import { findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
 import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore } from "@webpack/common";
 import type { ReactNode } from "react";
 
@@ -284,6 +284,40 @@ function uninstallGatewaySendSanitiser() {
     originalSend = null;
 }
 
+// discord's own dave client-connect handler assumes it always gets an array;
+// some server implementations (e.g. spacebar) send something else and crash
+// the whole voice negotiation with "e.forEach is not a function". normalise
+// the argument instead of letting it throw
+const DaveHandlerModule = findLazy(m => m?.prototype?._handleClientConnect);
+let originalHandleClientConnect: ((e: unknown, ...rest: unknown[]) => unknown) | null = null;
+
+function toArray(value: unknown): unknown[] {
+    if (Array.isArray(value)) return value;
+    if (value == null) return [];
+    if (typeof (value as any)[Symbol.iterator] === "function") return Array.from(value as Iterable<unknown>);
+    return Object.values(value as object);
+}
+
+function installDaveClientConnectGuard() {
+    if (originalHandleClientConnect || !DaveHandlerModule?.prototype?._handleClientConnect) return;
+
+    originalHandleClientConnect = DaveHandlerModule.prototype._handleClientConnect;
+    DaveHandlerModule.prototype._handleClientConnect = function (e: unknown, ...rest: unknown[]) {
+        try {
+            return originalHandleClientConnect!.call(this, toArray(e), ...rest);
+        } catch (err) {
+            logger.error("Swallowed error in DAVE _handleClientConnect to avoid killing voice negotiation", err);
+        }
+    };
+}
+
+function uninstallDaveClientConnectGuard() {
+    if (!originalHandleClientConnect || !DaveHandlerModule?.prototype) return;
+
+    DaveHandlerModule.prototype._handleClientConnect = originalHandleClientConnect;
+    originalHandleClientConnect = null;
+}
+
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 
 function stripIsSpoiler(body: string) {
@@ -408,6 +442,7 @@ export default definePlugin({
         startDMUnreadPoll();
         installFetchSanitiser();
         installGatewaySendSanitiser();
+        installDaveClientConnectGuard();
 
         if (typeof DiscordNative === "undefined") return;
 
@@ -431,6 +466,7 @@ export default definePlugin({
         stopDMUnreadPoll();
         uninstallFetchSanitiser();
         uninstallGatewaySendSanitiser();
+        uninstallDaveClientConnectGuard();
     },
 
     patches: [
