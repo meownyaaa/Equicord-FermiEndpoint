@@ -239,24 +239,32 @@ function isGatewayUrl(url: string) {
     return host ? url.includes(host) : url.includes("gateway.");
 }
 
-// temporary: log every outgoing frame's op code, and the full IDENTIFY body,
-// so a 4000 close (server rejects something right after connect, reason
-// stripped by the browser) can actually be diagnosed instead of guessed at
-function logGatewayFrame(data: string) {
+// spacebar's CLIENT_STATE_V2 capability bit (1<<10) routes guild
+// serialization through ReadyGuildDTO, which does `guild.roles.map(...)`
+// with no null guard. that throws inside identify handling on stock
+// spacebar-server (and any fork, harmony included), which gets caught
+// by the generic opcode error handler and closes the socket with 4000.
+// unsetting the bit keeps the client on the older, working guild path.
+const CLIENT_STATE_V2_BIT = 1 << 10;
+
+function stripClientStateV2(data: string) {
+    if (!data.includes('"op":2') || !data.includes('"capabilities"')) return data;
+
     try {
         const payload = JSON.parse(data);
-        if (payload?.op === 2) {
-            logger.info("outgoing IDENTIFY", payload);
-        } else {
-            logger.debug("outgoing gateway frame, op", payload?.op);
-        }
+        if (payload?.op !== 2 || typeof payload.d?.capabilities !== "number") return data;
+        if (!(payload.d.capabilities & CLIENT_STATE_V2_BIT)) return data;
+
+        payload.d.capabilities &= ~CLIENT_STATE_V2_BIT;
+        logger.debug("cleared CLIENT_STATE_V2 from IDENTIFY capabilities to avoid a spacebar-side 4000 close");
+        return JSON.stringify(payload);
     } catch {
-        // not json, ignore
+        return data;
     }
 }
 
 function sanitiseGatewayPayload(data: string) {
-    logGatewayFrame(data);
+    data = stripClientStateV2(data);
 
     if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
 
