@@ -240,27 +240,35 @@ function isGatewayUrl(url: string) {
 }
 
 // spacebar's CLIENT_STATE_V2 capability bit (1<<10) routes guild
-// serialization through ReadyGuildDTO, which does `guild.roles.map(...)`
-// with no null guard. that throws inside identify handling on stock
-// spacebar-server (and any fork, harmony included), which gets caught
-// by the generic opcode error handler and closes the socket with 4000.
-// unsetting the bit keeps the client on the older, working guild path.
+// serialization through a rarely-used code path in onIdentify. clearing
+// it forces the older, more-exercised path instead, as a workaround for
+// the 4000 close during identify. logged loudly (info, not debug) and
+// unconditionally so we can actually confirm this runs at all, rather
+// than assume - a previous version of this fix looked right on paper
+// but didn't resolve the issue, so don't trust it again without proof
 const CLIENT_STATE_V2_BIT = 1 << 10;
 
 function stripClientStateV2(data: string) {
-    if (!data.includes('"op":2') || !data.includes('"capabilities"')) return data;
+    if (!data.includes('"op":2')) return data;
 
+    let payload: any;
     try {
-        const payload = JSON.parse(data);
-        if (payload?.op !== 2 || typeof payload.d?.capabilities !== "number") return data;
-        if (!(payload.d.capabilities & CLIENT_STATE_V2_BIT)) return data;
-
-        payload.d.capabilities &= ~CLIENT_STATE_V2_BIT;
-        logger.debug("cleared CLIENT_STATE_V2 from IDENTIFY capabilities to avoid a spacebar-side 4000 close");
-        return JSON.stringify(payload);
+        payload = JSON.parse(data);
     } catch {
+        logger.info("IDENTIFY-shaped frame failed to parse as JSON, leaving untouched");
         return data;
     }
+
+    if (payload?.op !== 2) return data;
+
+    const caps = payload.d?.capabilities;
+    logger.info("intercepted outgoing IDENTIFY, capabilities =", caps, "has CLIENT_STATE_V2 =", typeof caps === "number" && !!(caps & CLIENT_STATE_V2_BIT));
+
+    if (typeof caps !== "number" || !(caps & CLIENT_STATE_V2_BIT)) return data;
+
+    payload.d.capabilities = caps & ~CLIENT_STATE_V2_BIT;
+    logger.info("cleared CLIENT_STATE_V2, new capabilities =", payload.d.capabilities);
+    return JSON.stringify(payload);
 }
 
 function sanitiseGatewayPayload(data: string) {
@@ -296,6 +304,15 @@ function installGatewaySendSanitiser() {
     // may cache its own constructor reference and never see a swapped-out global
     originalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (this: WebSocket, data: any) {
+        // temporary: log every websocket send this patch even sees, gateway
+        // or not, so we can tell whether the interception fires at all -
+        // if the client's gateway socket lives in a worker instead of the
+        // main thread, this prototype patch never touches it and every
+        // theory downstream of "we can edit the outgoing frame" is moot
+        if (typeof data === "string" && data.length < 300) {
+            logger.info("ws send on", this.url, "gatewayMatch =", isGatewayUrl(this.url), data);
+        }
+
         const payload = typeof data === "string" && isGatewayUrl(this.url)
             ? sanitiseGatewayPayload(data)
             : data;
