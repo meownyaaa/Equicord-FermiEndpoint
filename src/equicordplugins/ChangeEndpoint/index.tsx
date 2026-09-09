@@ -239,40 +239,49 @@ function isGatewayUrl(url: string) {
     return host ? url.includes(host) : url.includes("gateway.");
 }
 
-// spacebar's CLIENT_STATE_V2 capability bit (1<<10) routes guild
-// serialization through a rarely-used code path in onIdentify. clearing
-// it forces the older, more-exercised path instead, as a workaround for
-// the 4000 close during identify. logged loudly (info, not debug) and
-// unconditionally so we can actually confirm this runs at all, rather
-// than assume - a previous version of this fix looked right on paper
-// but didn't resolve the issue, so don't trust it again without proof
-const CLIENT_STATE_V2_BIT = 1 << 10;
+// spacebar's Capabilities.FLAGS only defines bits 0-11. clients on current
+// discord builds set higher bits (12,13,14,17,19,20 seen in practice) that
+// no fork's server code knows about, and some of those bits gate rarely-
+// exercised branches in onIdentify. masking capabilities down to only
+// known bits, and dropping newer top-level IDENTIFY fields a classic
+// schema wouldn't expect, forces the client back onto old, well-tested
+// server code paths as a blind workaround - not a diagnosed fix
+const KNOWN_CAPABILITY_BITS = (1 << 12) - 1; // bits 0-11, matches stock Capabilities.FLAGS
+const UNKNOWN_IDENTIFY_FIELDS = ["client_state", "qos_token", "gateway_connect_reasons", "has_client_mods", "client_app_state"];
 
-function stripClientStateV2(data: string) {
+function stripUnknownIdentifyFields(data: string) {
     if (!data.includes('"op":2')) return data;
 
     let payload: any;
     try {
         payload = JSON.parse(data);
     } catch {
-        logger.info("IDENTIFY-shaped frame failed to parse as JSON, leaving untouched");
         return data;
     }
+    if (payload?.op !== 2 || !payload.d) return data;
 
-    if (payload?.op !== 2) return data;
+    let changed = false;
 
-    const caps = payload.d?.capabilities;
-    logger.info("intercepted outgoing IDENTIFY, capabilities =", caps, "has CLIENT_STATE_V2 =", typeof caps === "number" && !!(caps & CLIENT_STATE_V2_BIT));
+    if (typeof payload.d.capabilities === "number" && (payload.d.capabilities & ~KNOWN_CAPABILITY_BITS)) {
+        payload.d.capabilities &= KNOWN_CAPABILITY_BITS;
+        changed = true;
+    }
 
-    if (typeof caps !== "number" || !(caps & CLIENT_STATE_V2_BIT)) return data;
+    for (const field of UNKNOWN_IDENTIFY_FIELDS) {
+        if (field in payload.d) {
+            delete payload.d[field];
+            changed = true;
+        }
+    }
 
-    payload.d.capabilities = caps & ~CLIENT_STATE_V2_BIT;
-    logger.info("cleared CLIENT_STATE_V2, new capabilities =", payload.d.capabilities);
+    if (!changed) return data;
+
+    logger.info("stripped unrecognized IDENTIFY fields/capability bits as a workaround for the 4000 close");
     return JSON.stringify(payload);
 }
 
 function sanitiseGatewayPayload(data: string) {
-    data = stripClientStateV2(data);
+    data = stripUnknownIdentifyFields(data);
 
     if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
 
@@ -326,17 +335,6 @@ function installGatewaySendSanitiser() {
     originalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (this: WebSocket, data: any) {
         const decoded = decodeIfBinary(data);
-
-        // temporary: log the type + a preview of every gateway send this patch
-        // sees, so we can actually confirm what shape discord is sending rather
-        // than assume it's always a string
-        if (isGatewayUrl(this.url)) {
-            logger.info(
-                "ws send on", this.url,
-                "type =", typeof data, data?.constructor?.name,
-                "preview =", decoded?.text?.slice(0, 300) ?? "(undecodable)"
-            );
-        }
 
         if (!decoded || !isGatewayUrl(this.url)) {
             return originalSend!.call(this, data);
@@ -508,6 +506,13 @@ export default definePlugin({
     },
 
     start() {
+        // raw canary, no Logger, no filtering, no gateway-url matching -
+        // if this doesn't show up in the console verbatim, the build
+        // being run does not contain this file's edits, full stop, and
+        // no amount of further changes to this file will do anything
+        // until the build/deploy step itself is fixed
+        console.log("%c[ChangeEndpoint CANARY] start() ran, build timestamp", "background:red;color:white;font-size:16px", new Date().toISOString());
+
         migrateVideoPlayerSetting();
         startGuildOrderSync();
         startDMUnreadPoll();
