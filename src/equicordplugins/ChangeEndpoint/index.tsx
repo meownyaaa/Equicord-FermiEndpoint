@@ -239,7 +239,25 @@ function isGatewayUrl(url: string) {
     return host ? url.includes(host) : url.includes("gateway.");
 }
 
+// temporary: log every outgoing frame's op code, and the full IDENTIFY body,
+// so a 4000 close (server rejects something right after connect, reason
+// stripped by the browser) can actually be diagnosed instead of guessed at
+function logGatewayFrame(data: string) {
+    try {
+        const payload = JSON.parse(data);
+        if (payload?.op === 2) {
+            logger.info("outgoing IDENTIFY", payload);
+        } else {
+            logger.debug("outgoing gateway frame, op", payload?.op);
+        }
+    } catch {
+        // not json, ignore
+    }
+}
+
 function sanitiseGatewayPayload(data: string) {
+    logGatewayFrame(data);
+
     if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
 
     try {
