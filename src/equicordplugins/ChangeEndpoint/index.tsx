@@ -297,6 +297,27 @@ function sanitiseGatewayPayload(data: string) {
     }
 }
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+// discord's Send() may hand WebSocket.send a pre-encoded Uint8Array/ArrayBuffer
+// (via TextEncoder) instead of a raw string - previous version of this patch
+// only ever looked at `typeof data === "string"`, so it silently no-op'd on
+// every single frame if that's the case, which is why nothing ever logged
+function decodeIfBinary(data: unknown): { text: string; reencode: (s: string) => any; } | null {
+    if (typeof data === "string") {
+        return { text: data, reencode: s => s };
+    }
+    if (data instanceof Uint8Array) {
+        return { text: textDecoder.decode(data), reencode: s => textEncoder.encode(s) };
+    }
+    if (data instanceof ArrayBuffer) {
+        return { text: textDecoder.decode(data), reencode: s => textEncoder.encode(s).buffer };
+    }
+    // Blob and other exotic types aren't handled - falls through to untouched passthrough
+    return null;
+}
+
 function installGatewaySendSanitiser() {
     if (originalSend) return;
 
@@ -304,18 +325,25 @@ function installGatewaySendSanitiser() {
     // may cache its own constructor reference and never see a swapped-out global
     originalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (this: WebSocket, data: any) {
-        // temporary: log every websocket send this patch even sees, gateway
-        // or not, so we can tell whether the interception fires at all -
-        // if the client's gateway socket lives in a worker instead of the
-        // main thread, this prototype patch never touches it and every
-        // theory downstream of "we can edit the outgoing frame" is moot
-        if (typeof data === "string" && data.length < 300) {
-            logger.info("ws send on", this.url, "gatewayMatch =", isGatewayUrl(this.url), data);
+        const decoded = decodeIfBinary(data);
+
+        // temporary: log the type + a preview of every gateway send this patch
+        // sees, so we can actually confirm what shape discord is sending rather
+        // than assume it's always a string
+        if (isGatewayUrl(this.url)) {
+            logger.info(
+                "ws send on", this.url,
+                "type =", typeof data, data?.constructor?.name,
+                "preview =", decoded?.text?.slice(0, 300) ?? "(undecodable)"
+            );
         }
 
-        const payload = typeof data === "string" && isGatewayUrl(this.url)
-            ? sanitiseGatewayPayload(data)
-            : data;
+        if (!decoded || !isGatewayUrl(this.url)) {
+            return originalSend!.call(this, data);
+        }
+
+        const sanitised = sanitiseGatewayPayload(decoded.text);
+        const payload = sanitised === decoded.text ? data : decoded.reencode(sanitised);
         return originalSend!.call(this, payload);
     };
 }
