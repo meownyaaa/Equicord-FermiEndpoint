@@ -239,50 +239,7 @@ function isGatewayUrl(url: string) {
     return host ? url.includes(host) : url.includes("gateway.");
 }
 
-// spacebar's Capabilities.FLAGS only defines bits 0-11. clients on current
-// discord builds set higher bits (12,13,14,17,19,20 seen in practice) that
-// no fork's server code knows about, and some of those bits gate rarely-
-// exercised branches in onIdentify. masking capabilities down to only
-// known bits, and dropping newer top-level IDENTIFY fields a classic
-// schema wouldn't expect, forces the client back onto old, well-tested
-// server code paths as a blind workaround - not a diagnosed fix
-const KNOWN_CAPABILITY_BITS = (1 << 12) - 1; // bits 0-11, matches stock Capabilities.FLAGS
-const UNKNOWN_IDENTIFY_FIELDS = ["client_state", "qos_token", "gateway_connect_reasons", "has_client_mods", "client_app_state"];
-
-function stripUnknownIdentifyFields(data: string) {
-    if (!data.includes('"op":2')) return data;
-
-    let payload: any;
-    try {
-        payload = JSON.parse(data);
-    } catch {
-        return data;
-    }
-    if (payload?.op !== 2 || !payload.d) return data;
-
-    let changed = false;
-
-    if (typeof payload.d.capabilities === "number" && (payload.d.capabilities & ~KNOWN_CAPABILITY_BITS)) {
-        payload.d.capabilities &= KNOWN_CAPABILITY_BITS;
-        changed = true;
-    }
-
-    for (const field of UNKNOWN_IDENTIFY_FIELDS) {
-        if (field in payload.d) {
-            delete payload.d[field];
-            changed = true;
-        }
-    }
-
-    if (!changed) return data;
-
-    logger.info("stripped unrecognized IDENTIFY fields/capability bits as a workaround for the 4000 close");
-    return JSON.stringify(payload);
-}
-
 function sanitiseGatewayPayload(data: string) {
-    data = stripUnknownIdentifyFields(data);
-
     if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
 
     try {
@@ -306,27 +263,6 @@ function sanitiseGatewayPayload(data: string) {
     }
 }
 
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
-
-// discord's Send() may hand WebSocket.send a pre-encoded Uint8Array/ArrayBuffer
-// (via TextEncoder) instead of a raw string - previous version of this patch
-// only ever looked at `typeof data === "string"`, so it silently no-op'd on
-// every single frame if that's the case, which is why nothing ever logged
-function decodeIfBinary(data: unknown): { text: string; reencode: (s: string) => any; } | null {
-    if (typeof data === "string") {
-        return { text: data, reencode: s => s };
-    }
-    if (data instanceof Uint8Array) {
-        return { text: textDecoder.decode(data), reencode: s => textEncoder.encode(s) };
-    }
-    if (data instanceof ArrayBuffer) {
-        return { text: textDecoder.decode(data), reencode: s => textEncoder.encode(s).buffer };
-    }
-    // Blob and other exotic types aren't handled - falls through to untouched passthrough
-    return null;
-}
-
 function installGatewaySendSanitiser() {
     if (originalSend) return;
 
@@ -334,14 +270,9 @@ function installGatewaySendSanitiser() {
     // may cache its own constructor reference and never see a swapped-out global
     originalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (this: WebSocket, data: any) {
-        const decoded = decodeIfBinary(data);
-
-        if (!decoded || !isGatewayUrl(this.url)) {
-            return originalSend!.call(this, data);
-        }
-
-        const sanitised = sanitiseGatewayPayload(decoded.text);
-        const payload = sanitised === decoded.text ? data : decoded.reencode(sanitised);
+        const payload = typeof data === "string" && isGatewayUrl(this.url)
+            ? sanitiseGatewayPayload(data)
+            : data;
         return originalSend!.call(this, payload);
     };
 }
@@ -506,13 +437,6 @@ export default definePlugin({
     },
 
     start() {
-        // raw canary, no Logger, no filtering, no gateway-url matching -
-        // if this doesn't show up in the console verbatim, the build
-        // being run does not contain this file's edits, full stop, and
-        // no amount of further changes to this file will do anything
-        // until the build/deploy step itself is fixed
-        console.log("%c[ChangeEndpoint CANARY] start() ran, build timestamp", "background:red;color:white;font-size:16px", new Date().toISOString());
-
         migrateVideoPlayerSetting();
         startGuildOrderSync();
         startDMUnreadPoll();
@@ -546,6 +470,29 @@ export default definePlugin({
     },
 
     patches: [
+        {
+            // discord's identify payload builder always includes client_state
+            // and qos_token, unconditionally. spacebar-family servers' own
+            // schema check (IdentifySchema in lambert-server/check.ts) rejects
+            // unrecognized extra properties, closing the socket with 4000
+            // right after IDENTIFY. strips both fields wherever they appear
+            // as trailing object-literal entries, independent of what's
+            // around them - anchoring on the actual wire-protocol field
+            // names instead of nearby code shape, since those are much
+            // less likely to shift between discord builds than minified
+            // variable names or property ordering
+            find: "qos_token:",
+            replacement: [
+                {
+                    match: /,client_state:\i(?=[,}])/g,
+                    replace: ""
+                },
+                {
+                    match: /,qos_token:\i(?=[,}])/g,
+                    replace: ""
+                }
+            ]
+        },
         {
             find: "async uploadFiles(",
             replacement: {
