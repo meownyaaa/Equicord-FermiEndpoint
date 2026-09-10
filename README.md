@@ -57,7 +57,7 @@ Clone Equicord:
 
 ```shell
 git clone https://github.com/meownyaaa/Equicord-FermiEndpoint
-cd Equicord
+cd Equicord-FermiEndpoint
 ```
 
 Install dependencies:
