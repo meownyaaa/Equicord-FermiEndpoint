@@ -477,6 +477,19 @@ export default definePlugin({
             ]
         },
         {
+            find: "os_arch:",
+            replacement: [
+                {
+                    match: /,os_arch:\i(?=[,}])/g,
+                    replace: ""
+                },
+                {
+                    match: /,app_arch:\i(?=[,}])/g,
+                    replace: ""
+                }
+            ]
+        },
+        {
             find: "async uploadFiles(",
             replacement: {
                 match: /async uploadFiles\((\i)\){/,
