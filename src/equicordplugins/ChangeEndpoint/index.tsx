@@ -500,30 +500,8 @@ export default definePlugin({
                 {
                     match: /,app_arch:\i(?=[,}])/g,
                     replace: ""
-                },
-                {
-                    match: /,release_channel:\i\|\|"unknown"(?=[,}])/g,
-                    replace: ""
-                },
-                {
-                    match: /,system_locale:\i(?=[,}])/g,
-                    replace: ""
                 }
             ]
-        },
-        {
-            find: "extendSuperProperties({launch_signature:",
-            replacement: {
-                match: /extendSuperProperties\(\{launch_signature:\i\}\)/,
-                replace: "extendSuperProperties({})"
-            }
-        },
-        {
-            find: "os_sdk_version",
-            replacement: {
-                match: /"darwin"===(\i)\?(\i)\.os_sdk_version=(\i)\?\.split\("\."\)\[0\]:"win32"===\1&&\(\2\.os_sdk_version=\3\?\.split\("\."\)\[2\]\)/,
-                replace: "0"
-            }
         },
         {
             find: "async uploadFiles(",
