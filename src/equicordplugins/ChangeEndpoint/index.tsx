@@ -484,6 +484,13 @@ export default definePlugin({
             }
         },
         {
+            find: "installation_id:n}:{}",
+            replacement: {
+                match: /null!=\i\?\{installation_id:\i\}:\{\}/,
+                replace: "{}"
+            }
+        },
+        {
             find: "os_arch:",
             replacement: [
                 {
