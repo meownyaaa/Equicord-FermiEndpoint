@@ -666,12 +666,12 @@ export default definePlugin({
                     `(${match}||"Electron"===${fn}().name&&${ver}>=1)`
             }
         },
-        {
+        /*{
             find: "get platformAlwaysPermits(){return",
             replacement: {
                 match: /get platformAlwaysPermits\(\)\{return.{0,100}?\.checkPermissionsEnabled\}/,
                 replace: "get platformAlwaysPermits(){return!0}"
-            }
+            }*/
         },
         {
             find: "originalItem:e,type:(0,",
