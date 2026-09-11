@@ -477,6 +477,10 @@ export default definePlugin({
                 {
                     match: /,app_arch:\i(?=[,}])/g,
                     replace: ""
+                },
+                {
+                    match: /,os_arch:\i(?=[,}])/g,
+                    replace: ""
                 }
             ]
         },
