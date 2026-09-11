@@ -265,9 +265,6 @@ function sanitiseGatewayPayload(data: string) {
 
 function installGatewaySendSanitiser() {
     if (originalSend) return;
-
-    // patch the shared prototype method instead of window.WebSocket, since discord
-    // may cache its own constructor reference and never see a swapped-out global
     originalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (this: WebSocket, data: any) {
         const payload = typeof data === "string" && isGatewayUrl(this.url)
@@ -284,10 +281,6 @@ function uninstallGatewaySendSanitiser() {
     originalSend = null;
 }
 
-// discord's own dave client-connect handler assumes it always gets an array;
-// some server implementations (e.g. spacebar) send something else and crash
-// the whole voice negotiation with "e.forEach is not a function". normalise
-// the argument instead of letting it throw
 const DaveHandlerModule = findLazy(m => m?.prototype?._handleClientConnect);
 let originalHandleClientConnect: ((e: unknown, ...rest: unknown[]) => unknown) | null = null;
 
@@ -479,6 +472,10 @@ export default definePlugin({
                 },
                 {
                     match: /,qos_token:\i(?=[,}])/g,
+                    replace: ""
+                },
+                {
+                    match: /,app_arch:\i(?=[,}])/g,
                     replace: ""
                 }
             ]
