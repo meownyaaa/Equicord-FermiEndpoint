@@ -671,8 +671,8 @@ export default definePlugin({
             replacement: {
                 match: /get platformAlwaysPermits\(\)\{return.{0,100}?\.checkPermissionsEnabled\}/,
                 replace: "get platformAlwaysPermits(){return!0}"
-            }*/
-        },
+            }
+        },*/
         {
             find: "originalItem:e,type:(0,",
             all: true,
