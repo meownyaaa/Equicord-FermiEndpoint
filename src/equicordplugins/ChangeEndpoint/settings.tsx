@@ -40,14 +40,14 @@ function clearCachedLoginData() {
 
         Toasts.show({
             id: Toasts.genId(),
-            message: "Cleared cached login data. Fully quit Discord (tray icon, not just the window) and relaunch it now.",
+            message: "Cleared cached login data",
             type: Toasts.Type.SUCCESS
         });
     } catch (e) {
         logger.error("Failed to clear cached data", e);
         Toasts.show({
             id: Toasts.genId(),
-            message: "Failed to clear cached data, check the console.",
+            message: "Failed to clear cached data.",
             type: Toasts.Type.FAILURE
         });
     }
