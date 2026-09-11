@@ -477,6 +477,13 @@ export default definePlugin({
             ]
         },
         {
+            find: "native_build_number:",
+            replacement: {
+                match: /,native_build_number:\i(?=[,}])/g,
+                replace: ""
+            }
+        },
+        {
             find: "os_arch:",
             replacement: [
                 {
