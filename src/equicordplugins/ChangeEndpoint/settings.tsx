@@ -60,8 +60,8 @@ const ClearCacheButton = () => (
             title: "Clear cached login data?",
             body: "This clears Discord's localStorage, sessionStorage, and IndexedDB for this client. " +
                 "Your Equicord settings and plugin data are kept. " +
-                "You'll need to fully quit Discord (tray icon, not just close the window) and relaunch it " +
-                "afterward. Do this after switching backends if the client freezes at the Discord logo. Continue?",
+                "You'll need to fully quit Discord, or back out of here afterwards and hit Restart at the " +
+                "top of the plugins page.",
             confirmText: "Clear data",
             cancelText: "Cancel",
             confirmColor: Button.Colors.RED,
