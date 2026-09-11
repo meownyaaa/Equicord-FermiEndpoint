@@ -471,16 +471,6 @@ export default definePlugin({
 
     patches: [
         {
-            // discord's identify payload builder always includes client_state
-            // and qos_token, unconditionally. spacebar-family servers' own
-            // schema check (IdentifySchema in lambert-server/check.ts) rejects
-            // unrecognized extra properties, closing the socket with 4000
-            // right after IDENTIFY. strips both fields wherever they appear
-            // as trailing object-literal entries, independent of what's
-            // around them - anchoring on the actual wire-protocol field
-            // names instead of nearby code shape, since those are much
-            // less likely to shift between discord builds than minified
-            // variable names or property ordering
             find: "qos_token:",
             replacement: [
                 {
@@ -660,14 +650,14 @@ export default definePlugin({
                 replace: "let{width:t,height:n}=e;return(t??1)>0&&(n??1)>0"
             }
         },
-        {
+        /* {
             find: "].find(e=>E(e).supported())",
             replacement: {
                 match: /\[(\w+\.\w+\.NATIVE),(\w+\.\w+\.WEBRTC)\]\.find\(e=>\w+\(e\)\.supported\(\)\)/,
                 replace: (match: string, native: string, webrtc: string) =>
                     match.replace(`[${native},${webrtc}]`, `[${webrtc},${native}]`)
             }
-        },
+        }, */
         {
             find: "\"Microsoft Edge\"===",
             replacement: {
