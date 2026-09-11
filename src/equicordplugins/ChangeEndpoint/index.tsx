@@ -477,10 +477,10 @@ export default definePlugin({
             ]
         },
         {
-            find: "native_build_number:",
+            find: "native_build_number",
             replacement: {
-                match: /,native_build_number:\i(?=[,}])/g,
-                replace: ""
+                match: /(\i)\.native_build_number=(\i)/,
+                replace: "$2"
             }
         },
         {
