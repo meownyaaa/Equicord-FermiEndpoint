@@ -473,14 +473,6 @@ export default definePlugin({
                 {
                     match: /,qos_token:\i(?=[,}])/g,
                     replace: ""
-                },
-                {
-                    match: /,app_arch:\i(?=[,}])/g,
-                    replace: ""
-                },
-                {
-                    match: /,os_arch:\i(?=[,}])/g,
-                    replace: ""
                 }
             ]
         },
