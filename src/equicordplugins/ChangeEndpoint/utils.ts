@@ -4,39 +4,47 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { PREDEFINED_SERVERS } from "./servers";
+import { CustomServer, PREDEFINED_SERVERS } from "./servers";
 import { settings } from "./settings";
 
-const isSimple = () => settings.store.backend === "custom-simple";
-const isAdvanced = () => settings.store.backend === "custom-advanced";
-
-export function getSimpleHost(): string {
-    return settings.store.customBackendHost
-        .trim()
-        .replace(/^\w+:\/\//, "")
-        .replace(/\/.*$/, "");
+function activeCustomServer(): CustomServer | undefined {
+    return settings.store.customServers.find(s => s.id === settings.store.backend);
 }
 
 function predefinedHost(): string | null {
     return PREDEFINED_SERVERS.find(s => s.id === settings.store.backend)?.host ?? null;
 }
 
-function resolveEndpoint(advancedValue: string, build: (host: string) => string): string | null {
-    if (isAdvanced()) return advancedValue.trim() || null;
-    if (isSimple()) return settings.store.customBackendHost.trim() ? build(getSimpleHost()) : null;
+export function simplifyHost(host: string): string {
+    return host
+        .trim()
+        .replace(/^\w+:\/\//, "")
+        .replace(/\/.*$/, "");
+}
 
-    const host = predefinedHost();
-    return host ? build(host) : null;
+function resolveEndpoint(advancedField: keyof CustomServer, build: (host: string) => string): string | null {
+    const predefined = predefinedHost();
+    if (predefined) return build(predefined);
+
+    const custom = activeCustomServer();
+    if (!custom) return null;
+
+    if (custom.type === "advanced") {
+        const value = (custom[advancedField] as string | undefined)?.trim();
+        return value || null;
+    }
+
+    return custom.host?.trim() ? build(simplifyHost(custom.host)) : null;
 }
 
 export const getApiEndpoint = () =>
-    resolveEndpoint(settings.store.customApiEndpoint, host => `//api.${host}/api`);
+    resolveEndpoint("apiEndpoint", host => `//api.${host}/api`);
 
 export const getCdnHost = () =>
-    resolveEndpoint(settings.store.customCdnHost, host => `cdn.${host}`);
+    resolveEndpoint("cdnHost", host => `cdn.${host}`);
 
 export const getGatewayEndpoint = () =>
-    resolveEndpoint(settings.store.customGatewayEndpoint, host => `wss://gateway.${host}`);
+    resolveEndpoint("gatewayEndpoint", host => `wss://gateway.${host}`);
 
 export const getMediaProxyEndpoint = () =>
-    resolveEndpoint(settings.store.customMediaProxyEndpoint, host => `//cdn.${host}`);
+    resolveEndpoint("mediaProxyEndpoint", host => `//cdn.${host}`);

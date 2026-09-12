@@ -20,6 +20,61 @@ export function migrateVideoPlayerSetting() {
     }
 }
 
+export function migrateDefaultBackend() {
+    const s = Settings.plugins.ChangeEndpoint as { backend?: string; migratedDefaultBackend?: boolean; };
+    if (!s.migratedDefaultBackend) {
+        if (!Object.hasOwn(s, "backend") || s.backend === "harmony") {
+            s.backend = "spacebar";
+        }
+        s.migratedDefaultBackend = true;
+    }
+}
+
+export function migrateCustomServers() {
+    const s = Settings.plugins.ChangeEndpoint as {
+        backend?: string;
+        customBackendHost?: string;
+        customApiEndpoint?: string;
+        customCdnHost?: string;
+        customGatewayEndpoint?: string;
+        customMediaProxyEndpoint?: string;
+        customServers?: import("./servers").CustomServer[];
+        migratedCustomServers?: boolean;
+    };
+    if (s.migratedCustomServers) return;
+    s.migratedCustomServers = true;
+
+    const hadLegacyCustom = s.customBackendHost || s.customApiEndpoint || s.customCdnHost
+        || s.customGatewayEndpoint || s.customMediaProxyEndpoint;
+    if (!hadLegacyCustom) return;
+
+    const wasAdvanced = s.backend === "custom-advanced";
+    const id = `custom-${Date.now().toString(36)}`;
+    s.customServers = [
+        ...(s.customServers ?? []),
+        {
+            id,
+            name: "Custom Server",
+            type: wasAdvanced ? "advanced" : "simple",
+            host: s.customBackendHost || undefined,
+            apiEndpoint: s.customApiEndpoint || undefined,
+            cdnHost: s.customCdnHost || undefined,
+            gatewayEndpoint: s.customGatewayEndpoint || undefined,
+            mediaProxyEndpoint: s.customMediaProxyEndpoint || undefined
+        }
+    ];
+
+    if (s.backend === "custom-simple" || s.backend === "custom-advanced") {
+        s.backend = id;
+    }
+
+    delete s.customBackendHost;
+    delete s.customApiEndpoint;
+    delete s.customCdnHost;
+    delete s.customGatewayEndpoint;
+    delete s.customMediaProxyEndpoint;
+}
+
 const isOurs = (name: string) => name.startsWith("Vencord") || name.startsWith("Equicord");
 
 function clearCachedLoginData() {
@@ -78,30 +133,18 @@ export const settings = definePluginSettings({
         description: "Backend to connect to",
         default: "spacebar"
     },
-    customBackendHost: {
+    customServers: {
         type: OptionType.CUSTOM,
-        description: "Custom backend host, simplified form",
-        default: ""
+        description: "User-added custom servers, each with its own id/name/type/endpoints. " +
+            "backend references one of these ids when a custom server (rather than a predefined one) is active.",
+        default: [] as import("./servers").CustomServer[]
     },
-    customApiEndpoint: {
+    accountBackends: {
         type: OptionType.CUSTOM,
-        description: "Custom API endpoint, advanced form",
-        default: ""
-    },
-    customCdnHost: {
-        type: OptionType.CUSTOM,
-        description: "Custom CDN host, advanced form",
-        default: ""
-    },
-    customGatewayEndpoint: {
-        type: OptionType.CUSTOM,
-        description: "Custom gateway endpoint, advanced form",
-        default: ""
-    },
-    customMediaProxyEndpoint: {
-        type: OptionType.CUSTOM,
-        description: "Custom media proxy endpoint, advanced form",
-        default: ""
+        description: "Per-account backend map. Keys are Discord user IDs, values are backend ids " +
+            "(a PREDEFINED_SERVERS id, or \"custom-simple\"/\"custom-advanced\"). When set, switching to " +
+            "that account via Discord's own account switcher also switches the backend, followed by a reload.",
+        default: {} as Record<string, string>
     },
     useChromiumVideoPlayer: {
         type: OptionType.BOOLEAN,

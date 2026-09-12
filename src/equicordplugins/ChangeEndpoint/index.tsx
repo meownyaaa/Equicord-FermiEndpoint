@@ -13,7 +13,7 @@ import { findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
 import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter } from "@webpack/common";
 import type { ReactNode } from "react";
 
-import { migrateVideoPlayerSetting, settings } from "./settings";
+import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
 import { DiscordSpoiler } from "./spoiler";
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 import { CustomVideoPlayer } from "./videoPlayer";
@@ -359,6 +359,8 @@ function installFetchSanitiser() {
     };
 }
 
+let pendingAccountBackendSwitch: { userId: string; backend: string; } | null = null;
+
 function uninstallFetchSanitiser() {
     if (!originalFetch) return;
     window.fetch = originalFetch;
@@ -412,6 +414,28 @@ export default definePlugin({
     },
 
     flux: {
+        MULTI_ACCOUNT_SWITCH_START({ targetUserId }: { targetUserId: string; }) {
+            const mapped = settings.store.accountBackends[targetUserId];
+            pendingAccountBackendSwitch = (mapped && mapped !== settings.store.backend)
+                ? { userId: targetUserId, backend: mapped }
+                : null;
+        },
+
+        MULTI_ACCOUNT_SWITCH_TIMEOUT() {
+            pendingAccountBackendSwitch = null;
+        },
+
+        MULTI_ACCOUNT_SWITCH_FAILURE() {
+            pendingAccountBackendSwitch = null;
+        },
+
+        CONNECTION_OPEN({ user }: { user?: { id: string; }; }) {
+            if (!pendingAccountBackendSwitch || user?.id !== pendingAccountBackendSwitch.userId) return;
+            settings.store.backend = pendingAccountBackendSwitch.backend;
+            pendingAccountBackendSwitch = null;
+            location.reload();
+        },
+
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
 
@@ -439,6 +463,8 @@ export default definePlugin({
 
     start() {
         migrateVideoPlayerSetting();
+        migrateDefaultBackend();
+        migrateCustomServers();
         startGuildOrderSync();
         startDMUnreadPoll();
         installFetchSanitiser();
