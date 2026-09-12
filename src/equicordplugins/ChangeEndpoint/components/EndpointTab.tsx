@@ -19,7 +19,7 @@ import { Alerts, Button, React, TextInput, UserStore, useState } from "@webpack/
 
 import { settings } from "../settings";
 
-const SETTING_KEYS = ["backend", "customServers", "accountBackends"] as const;
+const SETTING_KEYS = ["backend", "customServers", "accountBackends"] as Array<"backend" | "customServers" | "accountBackends">;
 
 function makeServerId(): string {
     return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
