@@ -1,0 +1,53 @@
+.vc-endpoint-status-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1em;
+}
+
+.vc-endpoint-status-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75em;
+}
+
+.vc-endpoint-status-right {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    color: var(--text-positive);
+    flex-shrink: 0;
+}
+
+.vc-endpoint-muted {
+    color: var(--text-muted);
+}
+
+.vc-endpoint-server-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+
+.vc-endpoint-server-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+}
+
+.vc-endpoint-server-card-active {
+    border-color: var(--brand-500);
+}
+
+.vc-endpoint-type-toggle {
+    display: flex;
+    gap: 0.5em;
+}
+
+.vc-endpoint-form-actions {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+}

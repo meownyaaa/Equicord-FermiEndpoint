@@ -4,12 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { PREDEFINED_SERVERS } from "./servers";
 import { settings } from "./settings";
-
-const HARMONY_API_ENDPOINT = "//api.harmony.melodychat.org/api";
-const HARMONY_CDN_HOST = "cdn.harmony.melodychat.org";
-const HARMONY_GATEWAY_ENDPOINT = "wss://gateway.harmony.melodychat.org";
-const HARMONY_MEDIA_PROXY_ENDPOINT = "//cdn.harmony.melodychat.org";
 
 const isSimple = () => settings.store.backend === "custom-simple";
 const isAdvanced = () => settings.store.backend === "custom-advanced";
@@ -21,20 +17,26 @@ export function getSimpleHost(): string {
         .replace(/\/.*$/, "");
 }
 
-function resolveEndpoint(advancedValue: string, simpleValue: () => string, harmonyValue: string): string | null {
+function predefinedHost(): string | null {
+    return PREDEFINED_SERVERS.find(s => s.id === settings.store.backend)?.host ?? null;
+}
+
+function resolveEndpoint(advancedValue: string, build: (host: string) => string): string | null {
     if (isAdvanced()) return advancedValue.trim() || null;
-    if (isSimple()) return settings.store.customBackendHost.trim() ? simpleValue() : null;
-    return harmonyValue;
+    if (isSimple()) return settings.store.customBackendHost.trim() ? build(getSimpleHost()) : null;
+
+    const host = predefinedHost();
+    return host ? build(host) : null;
 }
 
 export const getApiEndpoint = () =>
-    resolveEndpoint(settings.store.customApiEndpoint, () => `//api.${getSimpleHost()}/api`, HARMONY_API_ENDPOINT);
+    resolveEndpoint(settings.store.customApiEndpoint, host => `//api.${host}/api`);
 
 export const getCdnHost = () =>
-    resolveEndpoint(settings.store.customCdnHost, () => `cdn.${getSimpleHost()}`, HARMONY_CDN_HOST);
+    resolveEndpoint(settings.store.customCdnHost, host => `cdn.${host}`);
 
 export const getGatewayEndpoint = () =>
-    resolveEndpoint(settings.store.customGatewayEndpoint, () => `wss://gateway.${getSimpleHost()}`, HARMONY_GATEWAY_ENDPOINT);
+    resolveEndpoint(settings.store.customGatewayEndpoint, host => `wss://gateway.${host}`);
 
 export const getMediaProxyEndpoint = () =>
-    resolveEndpoint(settings.store.customMediaProxyEndpoint, () => `//cdn.${getSimpleHost()}`, HARMONY_MEDIA_PROXY_ENDPOINT);
+    resolveEndpoint(settings.store.customMediaProxyEndpoint, host => `//cdn.${host}`);

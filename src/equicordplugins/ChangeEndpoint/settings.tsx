@@ -72,81 +72,36 @@ const ClearCacheButton = () => (
     </Button>
 );
 
-const isSimple = () => settings.store.backend === "custom-simple";
-const isAdvanced = () => settings.store.backend === "custom-advanced";
-
-const required = (value: string) => value.trim() ? true : "Required. Leaving this blank makes the client keep whatever the page's own GLOBAL_ENV says for it.";
-
 export const settings = definePluginSettings({
     backend: {
-        type: OptionType.SELECT,
+        type: OptionType.CUSTOM,
         description: "Backend to connect to",
-        restartNeeded: true,
-        options: [
-            { label: "Harmony (harmony.melodychat.org)", value: "harmony", default: true },
-            { label: "Custom (Simplified)", value: "custom-simple" },
-            { label: "Custom (Advanced)", value: "custom-advanced" }
-        ]
+        default: "spacebar"
     },
     customBackendHost: {
-        type: OptionType.STRING,
-        description: "Only used with Custom (Simplified). Just the bare host, no scheme, no trailing slash " +
-            "(e.g. \"rory.server.spacebar.chat\"). To find this: open DevTools (Ctrl+Shift+I) on the instance's " +
-            "web client, go to the Network tab, log in or reload, and look for a request whose domain starts " +
-            "with \"api.\" - e.g. a request to \"api.rory.server.spacebar.chat/api/v9/...\". Everything after " +
-            "\"api.\" and before the next \"/\" is the host to put here. This assumes the instance follows the " +
-            "standard api.<host> / cdn.<host> / gateway.<host> convention - if it doesn't, or this doesn't work, " +
-            "use Custom (Advanced) instead and enter each endpoint separately. Spacebar instances publish their " +
-            "real endpoints at https://<host>/api/policies/instance/domains, which is the authoritative answer " +
-            "if the convention above doesn't hold.",
-        default: "",
-        restartNeeded: true,
-        hidden: () => !isSimple(),
-        isValid: required
+        type: OptionType.CUSTOM,
+        description: "Custom backend host, simplified form",
+        default: ""
     },
     customApiEndpoint: {
-        type: OptionType.STRING,
-        description: "Custom API endpoint - only used with Custom (Advanced). " +
-            "Include the scheme if your instance needs one (e.g. \"//api.myinstance.example.com/api\" or " +
-            "\"https://myinstance.example.com/api\"). This replaces window.GLOBAL_ENV.API_ENDPOINT verbatim, " +
-            "so match your instance's exact format - some Spacebar instances don't use the api.<host>/api convention. " +
-            "This is the \"apiEndpoint\" field of https://<host>/api/policies/instance/domains.",
-        default: "",
-        restartNeeded: true,
-        hidden: () => !isAdvanced(),
-        isValid: required
+        type: OptionType.CUSTOM,
+        description: "Custom API endpoint, advanced form",
+        default: ""
     },
     customCdnHost: {
-        type: OptionType.STRING,
-        description: "Custom CDN host - only used with Custom (Advanced). " +
-            "Just the host, no scheme (e.g. \"cdn.myinstance.example.com\"). Replaces window.GLOBAL_ENV.CDN_HOST verbatim. " +
-            "This is the \"cdn\" field of https://<host>/api/policies/instance/domains.",
-        default: "",
-        restartNeeded: true,
-        hidden: () => !isAdvanced(),
-        isValid: required
+        type: OptionType.CUSTOM,
+        description: "Custom CDN host, advanced form",
+        default: ""
     },
     customGatewayEndpoint: {
-        type: OptionType.STRING,
-        description: "Custom gateway endpoint - only used with Custom (Advanced). " +
-            "Include the wss:// scheme (e.g. \"wss://gateway.myinstance.example.com\"). " +
-            "Replaces window.GLOBAL_ENV.GATEWAY_ENDPOINT verbatim. " +
-            "This is the \"gateway\" field of https://<host>/api/policies/instance/domains.",
-        default: "",
-        restartNeeded: true,
-        hidden: () => !isAdvanced(),
-        isValid: required
+        type: OptionType.CUSTOM,
+        description: "Custom gateway endpoint, advanced form",
+        default: ""
     },
     customMediaProxyEndpoint: {
-        type: OptionType.STRING,
-        description: "Custom media proxy endpoint - only used with Custom (Advanced). " +
-            "Some instances point this at the same host as the CDN (e.g. \"//cdn.myinstance.example.com\"), " +
-            "others use a separate media proxy host - check your instance's own GLOBAL_ENV if unsure. " +
-            "Replaces window.GLOBAL_ENV.MEDIA_PROXY_ENDPOINT verbatim.",
-        default: "",
-        restartNeeded: true,
-        hidden: () => !isAdvanced(),
-        isValid: required
+        type: OptionType.CUSTOM,
+        description: "Custom media proxy endpoint, advanced form",
+        default: ""
     },
     useChromiumVideoPlayer: {
         type: OptionType.BOOLEAN,

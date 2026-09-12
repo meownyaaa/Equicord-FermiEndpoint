@@ -4,11 +4,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { WebsiteIcon } from "@components/Icons";
+import SettingsPlugin from "@plugins/_core/settings";
 import { Logger } from "@utils/Logger";
-import { parseUrl } from "@utils/misc";
+import { parseUrl, removeFromArray } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
-import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore } from "@webpack/common";
+import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter } from "@webpack/common";
 import type { ReactNode } from "react";
 
 import { migrateVideoPlayerSetting, settings } from "./settings";
@@ -370,6 +372,12 @@ export default definePlugin({
     required: true,
     settings,
 
+    toolboxActions: {
+        "Open ChangeEndpoint": () => {
+            SettingsRouter.openUserSettings("equicord_change_endpoint_panel");
+        },
+    },
+
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
         const withScheme = (url: string) => url.startsWith("//") ? `https:${url}` : url;
 
@@ -437,6 +445,13 @@ export default definePlugin({
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
 
+        SettingsPlugin.customEntries.push({
+            key: "equicord_change_endpoint",
+            title: "ChangeEndpoint",
+            Component: require("./components/EndpointTab").default,
+            Icon: WebsiteIcon
+        });
+
         if (typeof DiscordNative === "undefined") return;
 
         const originalQuery = navigator.permissions.query.bind(navigator.permissions);
@@ -460,6 +475,7 @@ export default definePlugin({
         uninstallFetchSanitiser();
         uninstallGatewaySendSanitiser();
         uninstallDaveClientConnectGuard();
+        removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
     },
 
     patches: [
