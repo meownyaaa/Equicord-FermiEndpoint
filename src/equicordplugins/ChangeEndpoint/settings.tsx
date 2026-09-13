@@ -139,6 +139,13 @@ export const settings = definePluginSettings({
             "backend references one of these ids when a custom server (rather than a predefined one) is active.",
         default: [] as import("./servers").CustomServer[]
     },
+    lastSeenUserId: {
+        type: OptionType.CUSTOM,
+        description: "The user id seen on the last CONNECTION_OPEN. Compared against the incoming user id " +
+            "on each new connection to detect an account switch (persisted, since it needs to survive the " +
+            "reload that happens partway through a switch).",
+        default: ""
+    },
     accountBackends: {
         type: OptionType.CUSTOM,
         description: "Per-account backend map. Keys are Discord user IDs, values are backend ids " +

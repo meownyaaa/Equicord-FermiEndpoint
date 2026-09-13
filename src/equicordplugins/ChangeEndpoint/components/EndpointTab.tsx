@@ -11,8 +11,7 @@ import { DoubleCheckmarkIcon, PencilIcon, PlusIcon, TrashIcon, WebsiteIcon } fro
 import { HeadingPrimary, HeadingTertiary } from "@components/Heading";
 import { Paragraph } from "@components/Paragraph";
 import { SettingsTab, wrapTab } from "@components/settings";
-import { PREDEFINED_SERVERS } from "@equicordplugins/ChangeEndpoint/servers";
-import type { CustomServer } from "@equicordplugins/ChangeEndpoint/servers";
+import { PREDEFINED_SERVERS, type CustomServer } from "@equicordplugins/ChangeEndpoint/servers";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
 import { Alerts, Button, React, TextInput, UserStore, useState } from "@webpack/common";

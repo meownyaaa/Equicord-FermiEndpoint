@@ -10,11 +10,17 @@ import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
-import { ChannelStore, DraftType, FluxDispatcher, GuildStore, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter } from "@webpack/common";
+import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter } from "@webpack/common";
 import type { ReactNode } from "react";
 
+import "./components/styles.css";
+
+import { PREDEFINED_SERVERS } from "./servers";
 import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
 import { DiscordSpoiler } from "./spoiler";
+
+// resolves to the AuthenticationActionCreators module, exposes logoutInternal
+const AuthActions = findLazy(m => m?.A?.logoutInternal);
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 import { CustomVideoPlayer } from "./videoPlayer";
 
@@ -87,14 +93,12 @@ function schedulePush() {
 }
 
 function applyGuildOrder(folders: HarmonyGuildFolder[]) {
-    const totalIds = folders.reduce((n, f) => n + f.guild_ids.filter(Boolean).length, 0);
-    const loadedIds = folders.reduce(
-        (n, f) => n + f.guild_ids.filter(id => id && GuildStore.getGuild(id)).length,
-        0
-    );
+    const knownIds = new Set(GuildStore.getGuildIds());
+    const uniqueIds = new Set(folders.flatMap(f => f.guild_ids.filter(Boolean)));
+    const missing = [...uniqueIds].filter(id => !knownIds.has(id));
 
-    if (loadedIds < totalIds) {
-        logger.debug(`Guilds not fully loaded yet (${loadedIds}/${totalIds}), deferring order apply`);
+    if (missing.length > 0) {
+        logger.debug(`Guilds not fully loaded yet (${uniqueIds.size - missing.length}/${uniqueIds.size}), deferring order apply`, missing);
         return false;
     }
 
@@ -359,8 +363,6 @@ function installFetchSanitiser() {
     };
 }
 
-let pendingAccountBackendSwitch: { userId: string; backend: string; } | null = null;
-
 function uninstallFetchSanitiser() {
     if (!originalFetch) return;
     window.fetch = originalFetch;
@@ -413,27 +415,98 @@ export default definePlugin({
         return everyone && everyone.color > 0 ? everyone : undefined;
     },
 
+    // sets the active backend then reloads, since endpoints are baked into GLOBAL_ENV at boot
+    switchBackend(id: string) {
+        settings.store.backend = id;
+        location.reload();
+    },
+
+    openBackendMenu(e: React.MouseEvent) {
+        const custom = settings.store.customServers;
+        ContextMenuApi.openContextMenu(e, () => (
+            <Menu.Menu navId="change-endpoint-switch-backend" onClose={ContextMenuApi.closeContextMenu}>
+                {PREDEFINED_SERVERS.map(s => (
+                    <Menu.MenuItem key={s.id} id={s.id} label={s.name} action={() => this.switchBackend(s.id)} />
+                ))}
+                {custom.length > 0 && <Menu.MenuSeparator />}
+                {custom.map(s => (
+                    <Menu.MenuItem key={s.id} id={s.id} label={s.name} action={() => this.switchBackend(s.id)} />
+                ))}
+            </Menu.Menu>
+        ));
+    },
+
+    switchAccount() {
+        AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
+    },
+
+    // used on the login form and the account-switcher landing screen — both real forms/modals,
+    // type="button" is critical here so Enter in the password field doesn't submit as this button
+    renderSwitchBackendButton() {
+        return (
+            <Button
+                key="change-endpoint-switch-backend"
+                type="button"
+                className="vc-endpoint-login-switch-button"
+                size={Button.Sizes.SMALL}
+                look={Button.Looks.OUTLINED}
+                onClick={e => this.openBackendMenu(e)}
+            >
+                Switch Backend
+            </Button>
+        );
+    },
+
+    // connecting/loading screen — fixed bottom-left, out of flow so it never shifts the spinner/tip layout
+    renderLoadingScreenButtons() {
+        return (
+            <div className="vc-endpoint-loading-switch-wrapper">
+                <Button
+                    key="change-endpoint-loading-switch-backend"
+                    type="button"
+                    className="vc-endpoint-login-switch-button"
+                    size={Button.Sizes.SMALL}
+                    look={Button.Looks.OUTLINED}
+                    onClick={e => this.openBackendMenu(e)}
+                >
+                    Switch Backend
+                </Button>
+                <Button
+                    key="change-endpoint-loading-switch-account"
+                    type="button"
+                    className="vc-endpoint-login-switch-button"
+                    size={Button.Sizes.SMALL}
+                    look={Button.Looks.OUTLINED}
+                    onClick={() => this.switchAccount()}
+                >
+                    Switch Account
+                </Button>
+            </div>
+        );
+    },
+
     flux: {
-        MULTI_ACCOUNT_SWITCH_START({ targetUserId }: { targetUserId: string; }) {
-            const mapped = settings.store.accountBackends[targetUserId];
-            pendingAccountBackendSwitch = (mapped && mapped !== settings.store.backend)
-                ? { userId: targetUserId, backend: mapped }
-                : null;
-        },
-
-        MULTI_ACCOUNT_SWITCH_TIMEOUT() {
-            pendingAccountBackendSwitch = null;
-        },
-
-        MULTI_ACCOUNT_SWITCH_FAILURE() {
-            pendingAccountBackendSwitch = null;
-        },
-
+        // Tap into Discord's own account switching, whatever triggers it (native switcher, a manual
+        // logoutInternal({isSwitchingAccount:true}) call, or a plain logout/login) - CONNECTION_OPEN fires
+        // with the now-active user on every one of those paths, so it's the one reliable anchor. We can't
+        // rely on catching a "switch started" event and reacting once the switch finishes: Discord resets
+        // the whole JS context partway through a switch, so any in-memory flag set at "start" is gone by
+        // the time the new session's CONNECTION_OPEN fires. lastSeenUserId is a persisted setting instead
+        // of a module-level variable specifically so the comparison survives that reset.
         CONNECTION_OPEN({ user }: { user?: { id: string; }; }) {
-            if (!pendingAccountBackendSwitch || user?.id !== pendingAccountBackendSwitch.userId) return;
-            settings.store.backend = pendingAccountBackendSwitch.backend;
-            pendingAccountBackendSwitch = null;
-            location.reload();
+            if (!user?.id) return;
+
+            const previousUserId = settings.store.lastSeenUserId;
+            settings.store.lastSeenUserId = user.id;
+
+            // First connection ever seen on this install, or reconnecting as the same account - nothing to do.
+            if (!previousUserId || previousUserId === user.id) return;
+
+            const mapped = settings.store.accountBackends[user.id];
+            if (mapped && mapped !== settings.store.backend) {
+                settings.store.backend = mapped;
+                location.reload();
+            }
         },
 
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
@@ -848,6 +921,30 @@ export default definePlugin({
             replacement: {
                 match: /if\(""==(\i)\)throw Error\("string is no integer"\)/g,
                 replace: 'if(""==$1)return this.ZERO'
+            }
+        },
+        {
+            find: "MULTI_ACCOUNT_SWITCH_LANDING",
+            replacement: {
+                match: /(children:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",textVariant:"text-sm\/medium",text:\i\.intl\.string\(\i\.\i\["9g2mqT"\]\),onClick:\i\}\)\}\))\]\}\)\}/,
+                replace: "$1,$self.renderSwitchBackendButton()]})}"
+            }
+        },
+        {
+            find: "username webauthn",
+            replacement: {
+                // adds our button as a second child inside the existing Go-back wrapper div,
+                // and forces that div to render as a flex row so both sit on the same line.
+                // (only renders when Go-back itself renders — i.e. the multi-account scenario)
+                match: /(\i&&\i&&\(0,\i\.jsx\)\("div",\{className:\i\.AX,)children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
+                replace: "$1style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$2,$self.renderSwitchBackendButton()]})"
+            }
+        },
+        {
+            find: "--connecting-container-fade-duration",
+            replacement: {
+                match: /(\(0,\i\.jsxs\)\("div",\{className:\i\(\)\(\i\.Bk,\{\[\i\.ly\]:this\.state\.problems\}\),children:\[\(0,\i\.jsx\)\("div",\{className:\i\.u1,children:\i\.intl\.string\(\i\.t\.AG2zPM\)\}\),\(0,\i\.jsxs\)\("div",\{children:\[\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.AR,href:\i\.\i\.TWITTER_SUPPORT,target:"_blank",children:\[\(0,\i\.jsx\)\(\i\.\i,\{size:"xs",color:"currentColor",className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\),\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.gy,href:\i\.\i\.STATUS,target:"_blank",children:\[\(0,\i\.jsx\)\(\i,\{className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\)\]\}\)\]\}\))/,
+                replace: "$1,$self.renderLoadingScreenButtons()"
             }
         },
     ]
