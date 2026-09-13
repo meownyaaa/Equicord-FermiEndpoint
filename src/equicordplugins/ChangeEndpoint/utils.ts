@@ -22,6 +22,9 @@ export function simplifyHost(host: string): string {
         .replace(/\/.*$/, "");
 }
 
+// fix some bullshit where itll go https://https//*server url* lol
+const HOST_ONLY_ADVANCED_FIELDS = new Set<keyof CustomServer>(["cdnHost", "mediaProxyEndpoint"]);
+
 function resolveEndpoint(advancedField: keyof CustomServer, build: (host: string) => string): string | null {
     const predefined = predefinedHost();
     if (predefined) return build(predefined);
@@ -30,7 +33,8 @@ function resolveEndpoint(advancedField: keyof CustomServer, build: (host: string
     if (!custom) return null;
 
     if (custom.type === "advanced") {
-        const value = (custom[advancedField] as string | undefined)?.trim();
+        let value = (custom[advancedField] as string | undefined)?.trim();
+        if (value && HOST_ONLY_ADVANCED_FIELDS.has(advancedField)) value = simplifyHost(value);
         return value || null;
     }
 

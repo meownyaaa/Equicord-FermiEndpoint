@@ -53,7 +53,7 @@ function activeServerLabel(): { name: string; host: string; } {
     return { name: "None", host: "not set" };
 }
 
-function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDone(): void; }) {
+function CustomServerForm({ existing, onDone, onSaved }: { existing?: CustomServer; onDone(): void; onSaved?(): void; }) {
     const [name, setName] = useState(existing?.name ?? "");
     const [type, setType] = useState<"simple" | "advanced">(existing?.type ?? "simple");
     const [host, setHost] = useState(existing?.host ?? "");
@@ -84,6 +84,7 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
             ? settings.store.customServers.map(s => (s.id === existing.id ? entry : s))
             : [...settings.store.customServers, entry];
 
+        onSaved?.();
         onDone();
 
         if (wasActive || !existing) {
@@ -176,6 +177,8 @@ function EndpointTab() {
     settings.use(SETTING_KEYS);
     const [addingCustom, setAddingCustom] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
+    const [refreshKey, setRefreshKey] = useState(0);
+    const forceRefresh = () => setRefreshKey(k => k + 1);
 
     const { backend, customServers } = settings.store;
     const active = activeServerLabel();
@@ -184,6 +187,7 @@ function EndpointTab() {
     const selectServer = (id: string) => {
         if (settings.store.backend === id) return;
         settings.store.backend = id;
+        forceRefresh();
         confirmRestart();
     };
 
@@ -200,12 +204,13 @@ function EndpointTab() {
                     settings.store.backend = PREDEFINED_SERVERS[0].id;
                     confirmRestart();
                 }
+                forceRefresh();
             }
         });
     };
 
     return (
-        <div className="vc-endpoint-tab">
+        <div className="vc-endpoint-tab" key={refreshKey}>
             <Card className="vc-endpoint-status-card">
                 <div className="vc-endpoint-status-left">
                     <WebsiteIcon height={20} width={20} />
@@ -270,9 +275,9 @@ function EndpointTab() {
             </div>
 
             {editingServer ? (
-                <CustomServerForm existing={editingServer} onDone={() => setEditingId(null)} />
+                <CustomServerForm existing={editingServer} onDone={() => setEditingId(null)} onSaved={forceRefresh} />
             ) : addingCustom ? (
-                <CustomServerForm onDone={() => setAddingCustom(false)} />
+                <CustomServerForm onDone={() => setAddingCustom(false)} onSaved={forceRefresh} />
             ) : (
                 <div className={classes(Margins.top8, "vc-endpoint-form-actions")}>
                     <Button size={Button.Sizes.SMALL} look={Button.Looks.FILLED} color={Button.Colors.TRANSPARENT} onClick={() => setAddingCustom(true)}>
