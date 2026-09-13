@@ -440,16 +440,18 @@ export default definePlugin({
         AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
     },
 
-    // used on the login form and the account-switcher landing screen — both real forms/modals,
-    // type="button" is critical here so Enter in the password field doesn't submit as this button
+    // used on the login form, account-switcher landing screen, and add-account modal — all real
+    // forms/modals, type="button" is critical here so Enter in the password field doesn't submit
+    // as this button. no custom className: bare look+color matches native buttons (e.g. "Go back")
+    // exactly, since it's the same underlying component discord uses
     renderSwitchBackendButton() {
         return (
             <Button
                 key="change-endpoint-switch-backend"
                 type="button"
-                className="vc-endpoint-login-switch-button"
                 size={Button.Sizes.SMALL}
                 look={Button.Looks.OUTLINED}
+                color={Button.Colors.PRIMARY}
                 onClick={e => this.openBackendMenu(e)}
             >
                 Switch Backend
@@ -464,9 +466,9 @@ export default definePlugin({
                 <Button
                     key="change-endpoint-loading-switch-backend"
                     type="button"
-                    className="vc-endpoint-login-switch-button"
                     size={Button.Sizes.SMALL}
                     look={Button.Looks.OUTLINED}
+                    color={Button.Colors.PRIMARY}
                     onClick={e => this.openBackendMenu(e)}
                 >
                     Switch Backend
@@ -474,9 +476,9 @@ export default definePlugin({
                 <Button
                     key="change-endpoint-loading-switch-account"
                     type="button"
-                    className="vc-endpoint-login-switch-button"
                     size={Button.Sizes.SMALL}
                     look={Button.Looks.OUTLINED}
+                    color={Button.Colors.PRIMARY}
                     onClick={() => this.switchAccount()}
                 >
                     Switch Account
@@ -938,6 +940,15 @@ export default definePlugin({
                 // (only renders when Go-back itself renders — i.e. the multi-account scenario)
                 match: /(\i&&\i&&\(0,\i\.jsx\)\("div",\{className:\i\.AX,)children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
                 replace: "$1style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$2,$self.renderSwitchBackendButton()]})"
+            }
+        },
+        {
+            find: '"13/7kX"',
+            replacement: {
+                // add-account modal: put switch backend beside "Go back" in the leading slot,
+                // not in actions (which sits separately and stacks above)
+                match: /leading:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:(\i),text:(\i\.intl\.string\(\i\.\i\["13\/7kX"\]\)),type:"button"\}\)/,
+                replace: 'leading:(0,r.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderSwitchBackendButton(),(0,r.jsx)(C.Q,{variant:"secondary",size:"md",onClick:$1,text:$2,type:"button"})]})'
             }
         },
         {
