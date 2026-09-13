@@ -330,6 +330,42 @@ function uninstallDaveClientConnectGuard() {
     originalHandleClientConnect = null;
 }
 
+const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
+
+function fixReactionEmoji(emoji: any) {
+    if (!emoji || emoji.id || !SNOWFLAKE_AS_NAME.test(emoji.name ?? "")) return;
+    // some spacebar backends omit the emoji id on older reactions and dump the snowflake into name instead,
+    // which makes the client treat it as a unicode emoji and render the raw digits
+    emoji.id = emoji.name;
+    emoji.animated ??= true;
+}
+
+function sanitiseReactionPayload(payload: any) {
+    fixReactionEmoji(payload?.reaction?.emoji ?? payload?.emoji);
+
+    const messages = payload?.messages ?? (payload?.message ? [payload.message] : []);
+    for (const message of messages) {
+        for (const reaction of message?.reactions ?? []) fixReactionEmoji(reaction?.emoji);
+    }
+}
+
+let originalDispatch: typeof FluxDispatcher.dispatch | null = null;
+
+function installReactionEmojiFix() {
+    if (originalDispatch) return;
+    originalDispatch = FluxDispatcher.dispatch.bind(FluxDispatcher);
+    FluxDispatcher.dispatch = (payload: any) => {
+        if (getCdnHost() != null) sanitiseReactionPayload(payload);
+        return originalDispatch!(payload);
+    };
+}
+
+function uninstallReactionEmojiFix() {
+    if (!originalDispatch) return;
+    FluxDispatcher.dispatch = originalDispatch;
+    originalDispatch = null;
+}
+
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 // ^ lowkey forgot what this does, dont remove unless yk what it is
 
@@ -557,6 +593,7 @@ export default definePlugin({
         installFetchSanitiser();
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
+        installReactionEmojiFix();
 
         SettingsPlugin.customEntries.push({
             key: "equicord_change_endpoint",
@@ -588,6 +625,7 @@ export default definePlugin({
         uninstallFetchSanitiser();
         uninstallGatewaySendSanitiser();
         uninstallDaveClientConnectGuard();
+        uninstallReactionEmojiFix();
         removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
     },
 
