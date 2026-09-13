@@ -30,7 +30,7 @@ export interface ButtonProps extends PropsWithChildren<Omit<HTMLProps<HTMLButton
 
 export type Button = ComponentType<ButtonProps> & {
     Colors: Record<"BRAND" | "RED" | "GREEN" | "PRIMARY" | "LINK" | "WHITE" | "TRANSPARENT" | "CUSTOM", string>;
-    Looks: Record<"FILLED" | "LINK", string>;
+    Looks: Record<"FILLED" | "LINK" | "OUTLINED", string>;
     Sizes: Record<"NONE" | "SMALL" | "MEDIUM" | "LARGE" | "XLARGE" | "MIN", string>;
 };
 
