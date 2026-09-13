@@ -167,6 +167,9 @@ function stopGuildOrderSync() {
     pollTimer = debounceTimer = null;
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, schedulePush));
 }
+// ^^ all of this needs to be reworked, /settings is deprecated
+// and could be removed entirely from spacebar at any point
+// to do
 
 const DM_CHANNEL_TYPE = 1;
 const GROUP_DM_CHANNEL_TYPE = 3;
@@ -206,6 +209,8 @@ async function checkChannelForMissedMessage(channel: { id: string; last_message_
         logger.error(`Failed to fetch latest message for channel ${channel.id}`, e);
     }
 }
+// possibly non functional? i dont get enough dms to know
+// gotta check that in the future, but its low priority
 
 async function pollDMUnreads() {
     try {
@@ -268,6 +273,9 @@ function sanitiseGatewayPayload(data: string) {
         return data;
     }
 }
+// not finished, i still get a 4002 when changing rich presence on
+// capable backends, and goes into a loop when using certain song
+// tracking plugins
 
 function installGatewaySendSanitiser() {
     if (originalSend) return;
@@ -318,6 +326,7 @@ function uninstallDaveClientConnectGuard() {
 }
 
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
+// ^ lowkey forgot what this does, dont remove unless yk what it is
 
 function stripIsSpoiler(body: string) {
     if (!body.includes('"is_spoiler"')) return body;
@@ -373,7 +382,11 @@ export default definePlugin({
     name: "ChangeEndpoint",
     description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one).",
     authors: [],
+    // to add author ids for both my harmony and spacebar accounts, forgot how its
+    // formatted though, and im too lazy tbh
     required: true,
+    // dont be a dumbass and set this to false/remove it, its basically
+    // crucial to the plugin persisting and working..
     settings,
 
     toolboxActions: {
@@ -416,6 +429,8 @@ export default definePlugin({
     },
 
     // sets the active backend then reloads, since endpoints are baked into GLOBAL_ENV at boot
+    // maybe i could complicate this and have it half reload? client takes a while to initially
+    // start up, faster switch times would be nicer
     switchBackend(id: string) {
         settings.store.backend = id;
         location.reload();
@@ -440,10 +455,9 @@ export default definePlugin({
         AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
     },
 
-    // used on the login form, account-switcher landing screen, and add-account modal — all real
-    // forms/modals, type="button" is critical here so Enter in the password field doesn't submit
-    // as this button. no custom className: bare look+color matches native buttons (e.g. "Go back")
-    // exactly, since it's the same underlying component discord uses
+    // for the login page, gotta add it to the actual account switcher and not just
+    // add account, i guess? add account page is more "stable" though, and already
+    // has those style of buttons.. - gotta fix height though, once fixed ill remove this line, dash is the starting point
     renderSwitchBackendButton() {
         return (
             <Button
@@ -459,7 +473,7 @@ export default definePlugin({
         );
     },
 
-    // connecting/loading screen — fixed bottom-left, out of flow so it never shifts the spinner/tip layout
+    // actual loading screen buttons, pretty self explanatory #lol
     renderLoadingScreenButtons() {
         return (
             <div className="vc-endpoint-loading-switch-wrapper">
@@ -488,20 +502,12 @@ export default definePlugin({
     },
 
     flux: {
-        // Tap into Discord's own account switching, whatever triggers it (native switcher, a manual
-        // logoutInternal({isSwitchingAccount:true}) call, or a plain logout/login) - CONNECTION_OPEN fires
-        // with the now-active user on every one of those paths, so it's the one reliable anchor. We can't
-        // rely on catching a "switch started" event and reacting once the switch finishes: Discord resets
-        // the whole JS context partway through a switch, so any in-memory flag set at "start" is gone by
-        // the time the new session's CONNECTION_OPEN fires. lastSeenUserId is a persisted setting instead
-        // of a module-level variable specifically so the comparison survives that reset.
         CONNECTION_OPEN({ user }: { user?: { id: string; }; }) {
             if (!user?.id) return;
 
             const previousUserId = settings.store.lastSeenUserId;
             settings.store.lastSeenUserId = user.id;
 
-            // First connection ever seen on this install, or reconnecting as the same account - nothing to do.
             if (!previousUserId || previousUserId === user.id) return;
 
             const mapped = settings.store.accountBackends[user.id];
@@ -513,7 +519,8 @@ export default definePlugin({
 
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
-
+            // work of art, basically it makes spoilering on your own attachments ACTUALLY WORK!!!
+            // i dont know if this is the exact section, but i dont care im proud of my baby
             const upload = UploadAttachmentStore.getUpload(channelId, id, draftType);
             if (!upload?.uploadedFilename) return;
 
@@ -582,6 +589,9 @@ export default definePlugin({
     patches: [
         {
             find: "qos_token:",
+            // this was the main cause of the Identify loop, fuck whoever added this for no reason.
+            // its LITERALLY just a 'quality of service token' that tracks your client. (weirdos)
+            // 'web.831e884588cb7b8b.js' was where it started :middle_finger:
             replacement: [
                 {
                     match: /,client_state:\i(?=[,}])/g,
@@ -620,6 +630,11 @@ export default definePlugin({
                 }
             ]
         },
+        // all that is to reduce any problems with Identify in the future
+        // and to mainly reduce on the tracking sent over initially, which
+        // isnt needed on spacebar or spacebar-adjacent servers,
+        // although the desktop client doesnt work still and math stopped
+        // telling me what was causing it, maybe didnt see my messages?
         {
             find: "async uploadFiles(",
             replacement: {
@@ -682,6 +697,7 @@ export default definePlugin({
             replacement: {
                 match: /function (\w+)\(\)\{try\{return \w+\.getConfig\(\{location:"gif_picker"\}\)\.provider\}catch\(\w+\)\{return \w+\.warn\("Error getting provider for API request:",\w+\),"tenor"\}\}/,
                 replace: 'function $1(){return"klipy"}'
+                // forces klipy ig
             }
         },
         {
@@ -719,6 +735,7 @@ export default definePlugin({
             replacement: {
                 match: /avatar:(\w+),avatar_description:\w+,avatar_id:/g,
                 replace: "avatar:$1,avatar_id:"
+                // pfp fix i think?
             }
         },
         {
@@ -738,6 +755,7 @@ export default definePlugin({
         },
         {
             find: "colorRoleId:void 0,hoistRoleId:void 0",
+            // this is to fix role colors that are assigned to @everyone not showing
             replacement: {
                 match: /function \i\((\i),(\i)\)\{let (\i),(\i),(\i),(\i);if\(0===\2\.length\)return\{colorString:null,colorStrings:null,colorRoleId:void 0,hoistRoleId:void 0,iconRoleId:void 0,highestRoleId:void 0\};.{0,280}?return\{colorString:\3\?\.colorString\?\?null,colorStrings:\3\?\.colorStrings\?\?null,colorRoleId:\3\?\.id,iconRoleId:\5\?\.id,hoistRoleId:\4\?\.id,highestRoleId:\6\?\.id\}\}/,
                 replace: (match: string, e: string, t: string, n: string, i: string, r: string, a: string) => match
@@ -755,7 +773,7 @@ export default definePlugin({
             find: "c.preferred_region=",
             replacement: {
                 match: /\(c\.preferred_region=(\w+),c\.preferred_regions=\w+\)/,
-                replace: "(c.preferred_region=$1)"
+                replace: "(c.preferred_region=$1)" // for vc connecting, crucial patch for that but client will work without it
             }
         },
         {
@@ -871,7 +889,10 @@ export default definePlugin({
             replacement: {
                 match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
                 replace: 'spoiler:($2.filename??$2.originalItem?.filename)?.startsWith("SPOILER_")||$1',
-                noWarn: true
+                /* 
+                    might not be functional? i get a warning about this in logs, pretty sure the other
+                    stuff is patching spoilers, not this
+                */
             }
         },
         {
@@ -915,6 +936,12 @@ export default definePlugin({
             replacement: {
                 match: /(gif_provider:(\i)\.provider.{0,150}?source_object:"GIF Picker",gif_url:\2\.url,gif_id:\2\.id\};)(\i)\(\2\.url,/,
                 replace: "$1$3($self.resolveGifUrl($2),"
+                /* 
+                   gotta make the gif picker patches better at some point, right now theyre basic
+                   and dont really fix the main problems, although they are good enough to work for
+                   now, i dont feel like they will last especially when i eventually give up on this
+                   plugin and send it into LTS at one point in the future
+                */
             }
         },
         {
@@ -935,9 +962,6 @@ export default definePlugin({
         {
             find: "username webauthn",
             replacement: {
-                // adds our button as a second child inside the existing Go-back wrapper div,
-                // and forces that div to render as a flex row so both sit on the same line.
-                // (only renders when Go-back itself renders — i.e. the multi-account scenario)
                 match: /(\i&&\i&&\(0,\i\.jsx\)\("div",\{className:\i\.AX,)children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
                 replace: "$1style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$2,$self.renderSwitchBackendButton()]})"
             }
@@ -945,8 +969,6 @@ export default definePlugin({
         {
             find: '"13/7kX"',
             replacement: {
-                // add-account modal: put switch backend beside "Go back" in the leading slot,
-                // not in actions (which sits separately and stacks above)
                 match: /leading:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:(\i),text:(\i\.intl\.string\(\i\.\i\["13\/7kX"\]\)),type:"button"\}\)/,
                 replace: 'leading:(0,r.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderSwitchBackendButton(),(0,r.jsx)(C.Q,{variant:"secondary",size:"md",onClick:$1,text:$2,type:"button"})]})'
             }
@@ -956,6 +978,12 @@ export default definePlugin({
             replacement: {
                 match: /(\(0,\i\.jsxs\)\("div",\{className:\i\(\)\(\i\.Bk,\{\[\i\.ly\]:this\.state\.problems\}\),children:\[\(0,\i\.jsx\)\("div",\{className:\i\.u1,children:\i\.intl\.string\(\i\.t\.AG2zPM\)\}\),\(0,\i\.jsxs\)\("div",\{children:\[\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.AR,href:\i\.\i\.TWITTER_SUPPORT,target:"_blank",children:\[\(0,\i\.jsx\)\(\i\.\i,\{size:"xs",color:"currentColor",className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\),\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.gy,href:\i\.\i\.STATUS,target:"_blank",children:\[\(0,\i\.jsx\)\(\i,\{className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\)\]\}\)\]\}\))/,
                 replace: "$1,$self.renderLoadingScreenButtons()"
+                /*
+                   helper for the buttons on loading screen - i gotta make them persist for like a
+                   second or two longer, sometimes backend will connect insanely fast and you get no
+                   chance to click them. also, gotta fix the issue where sometimes the "logout" will
+                   break the entire client; see https://softgaypaws.com/assets/etc/example-m3sD.png
+                */
             }
         },
     ]
