@@ -251,7 +251,7 @@ function isGatewayUrl(url: string) {
 }
 
 function sanitiseGatewayPayload(data: string) {
-    if (!data.includes('"op":3') || !data.includes('"metadata"')) return data;
+    if (!data.includes('"op":3')) return data;
 
     try {
         const payload = JSON.parse(data);
@@ -260,22 +260,27 @@ function sanitiseGatewayPayload(data: string) {
         let changed = false;
         for (const activity of payload.d.activities) {
             const meta = activity?.metadata;
-            if (!meta || (meta.album_id && meta.artist_ids)) continue;
-            delete activity.metadata;
-            changed = true;
+            if (meta && !(meta.album_id && meta.artist_ids)) {
+                delete activity.metadata;
+                changed = true;
+            }
+
+            if (activity && typeof activity.flags === "number") {
+                activity.flags = String(activity.flags);
+                changed = true;
+            }
         }
 
         if (!changed) return data;
 
-        logger.debug("Stripped incomplete activity metadata from a presence update to avoid a 4002 close");
+        logger.debug("Sanitised a presence update (metadata/flags) to avoid a 4002 close");
         return JSON.stringify(payload);
     } catch {
         return data;
     }
 }
-// not finished, i still get a 4002 when changing rich presence on
-// capable backends, and goes into a loop when using certain song
-// tracking plugins
+// metadata stripping still not finished, still get a 4002 in some
+// cases with song tracking plugins
 
 function installGatewaySendSanitiser() {
     if (originalSend) return;
