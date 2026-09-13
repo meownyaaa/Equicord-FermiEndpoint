@@ -646,7 +646,7 @@ export default definePlugin({
             find: "return\"https:\"+window.GLOBAL_ENV.API_ENDPOINT+(",
             replacement: {
                 match: /function (\i)\(\)\{let (\i)=!\(arguments\.length>0\)\|\|void 0===arguments\[0\]\|\|arguments\[0\];return"https:"\+window\.GLOBAL_ENV\.API_ENDPOINT\+\(\2\?`\/v\$\{window\.GLOBAL_ENV\.API_VERSION\}`:""\)\}/,
-                replace: 'function $1(){return"https:"+window.GLOBAL_ENV.API_ENDPOINT+`/v${window.GLOBAL_ENV.API_VERSION}`}'
+                replace: 'function $1(){let e=window.GLOBAL_ENV.API_ENDPOINT;return(/^\\w+:\\/\\//.test(e)?e:"https:"+e)+`/v${window.GLOBAL_ENV.API_VERSION}`}'
             }
         },
         {
