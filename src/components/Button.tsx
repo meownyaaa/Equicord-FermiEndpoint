@@ -72,7 +72,8 @@ export const ButtonCompat: DiscordButton = function ButtonCompat({ look, color =
 /** @deprecated */
 ButtonCompat.Looks = {
     FILLED: "",
-    LINK: "LINK"
+    LINK: "LINK",
+    OUTLINED: "OUTLINED"
 } as const;
 
 /** @deprecated */
