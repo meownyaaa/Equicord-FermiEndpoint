@@ -281,7 +281,7 @@ function sanitiseGatewayPayload(data: string) {
     }
 }
 // metadata stripping still not finished, still get a 4002 in some
-// cases with song tracking plugins
+// cases with RPC but mostly functional now
 
 function installGatewaySendSanitiser() {
     if (originalSend) return;
@@ -335,7 +335,7 @@ const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
 
 function fixReactionEmoji(emoji: any) {
     if (!emoji || emoji.id || !SNOWFLAKE_AS_NAME.test(emoji.name ?? "")) return;
-    // some spacebar backends omit the emoji id on older reactions and dump the snowflake into name instead,
+    // some spacebar backends omit the emoji id on older reactions(unconfirmed) and dump the snowflake into name instead,
     // which makes the client treat it as a unicode emoji and render the raw digits
     emoji.id = emoji.name;
     emoji.animated ??= true;
@@ -474,6 +474,16 @@ export default definePlugin({
         }, { noop: true });
     },
 
+    // this row is wrapped in React.memo with no comparator, and discord mutates the
+    // channel object in place on CHANNEL_UPDATE rather than replacing it, so a changed
+    // icon field never trips the default shallow prop compare - check it explicitly
+    channelIconMemoEqual(a: any, b: any) {
+        return a.channel === b.channel && a.channel.icon === b.channel.icon &&
+            a.className === b.className && a.containerClassName === b.containerClassName &&
+            a.locked === b.locked && a.hasActiveThreads === b.hasActiveThreads &&
+            a.hasUsersInVoiceChannel === b.hasUsersInVoiceChannel;
+    },
+
     getEveryoneColorRole(guildRoles: Record<string, ColorRole>) {
         const everyone = Object.values(guildRoles).find(r => r.id === r.guildId);
         return everyone && everyone.color > 0 ? everyone : undefined;
@@ -572,6 +582,8 @@ export default definePlugin({
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
             // work of art, basically it makes spoilering on your own attachments ACTUALLY WORK!!!
             // i dont know if this is the exact section, but i dont care im proud of my baby
+            // .. update i gotta fix smth related to the uploading images stuff as a whole
+            // FUCK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             const upload = UploadAttachmentStore.getUpload(channelId, id, draftType);
             if (!upload?.uploadedFilename) return;
 
@@ -657,9 +669,20 @@ export default definePlugin({
         },
         {
             find: '"ChannelItemIcon")',
+            all: true,
             replacement: {
-                match: /switch\((\i)\.type\)\{case (\i)\.rbe\.DM:/,
+                match: /switch\((\i)\.type\)\{case (\i)\.rbe\.DM:/g,
                 replace: "if($1.icon)return $self.renderChannelIcon($1);switch($1.type){case $2.rbe.DM:"
+            }
+        },
+        {
+            // the icon-selector row is wrapped in a bare React.memo (no comparator),
+            // so an in-place channel.icon mutation on CHANNEL_UPDATE gets shallow-compared
+            // away and the row never re-renders - give it a comparator that also checks icon
+            find: '"ChannelItemIcon")',
+            replacement: {
+                match: /role:"img","aria-label":\i,className:\i\(\)\(\i\.\i,\i\),children:\i\}\)\}\)\}/,
+                replace: "$&,$self.channelIconMemoEqual"
             }
         },
         {
@@ -818,6 +841,7 @@ export default definePlugin({
             replacement: {
                 match: /getPremiumTypeOverride\(\)\{return o\.premiumTypeOverride\}/,
                 replace: "getPremiumTypeOverride(){return 2}"
+                // nitro trickery, not sure if fully functional
             }
         },
         {
@@ -826,6 +850,7 @@ export default definePlugin({
             replacement: {
                 match: /\w+\.features\.has\(\w+\.GuildFeatures\.ENHANCED_ROLE_COLORS\)/g,
                 replace: "true"
+                // ig bro
             }
         },
         {
@@ -880,14 +905,14 @@ export default definePlugin({
                 replace: "let{width:t,height:n}=e;return(t??1)>0&&(n??1)>0"
             }
         },
-        /* {
+        {
             find: "].find(e=>E(e).supported())",
             replacement: {
                 match: /\[(\w+\.\w+\.NATIVE),(\w+\.\w+\.WEBRTC)\]\.find\(e=>\w+\(e\)\.supported\(\)\)/,
                 replace: (match: string, native: string, webrtc: string) =>
                     match.replace(`[${native},${webrtc}]`, `[${webrtc},${native}]`)
             }
-        }, */
+        },
         {
             find: "\"Microsoft Edge\"===",
             replacement: {
