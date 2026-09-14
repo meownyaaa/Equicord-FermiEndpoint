@@ -81,8 +81,8 @@ function CustomServerForm({ existing, onDone, onSaved }: { existing?: CustomServ
 
         const wasActive = settings.store.backend === existing?.id;
         settings.store.customServers = existing
-            ? settings.store.customServers.map(s => (s.id === existing.id ? entry : s))
-            : [...settings.store.customServers, entry];
+            ? settings.plain.customServers.map(s => (s.id === existing.id ? entry : s))
+            : [...settings.plain.customServers, entry];
 
         onSaved?.();
         onDone();
@@ -199,7 +199,7 @@ function EndpointTab() {
             confirmColor: Button.Colors.RED,
             cancelText: "Cancel",
             onConfirm: () => {
-                settings.store.customServers = settings.store.customServers.filter(s => s.id !== id);
+                settings.store.customServers = settings.plain.customServers.filter(s => s.id !== id);
                 if (settings.store.backend === id) {
                     settings.store.backend = PREDEFINED_SERVERS[0].id;
                     confirmRestart();

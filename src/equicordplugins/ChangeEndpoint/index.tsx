@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import ErrorBoundary from "@components/ErrorBoundary";
 import { WebsiteIcon } from "@components/Icons";
 import SettingsPlugin from "@plugins/_core/settings";
 import { Logger } from "@utils/Logger";
@@ -464,6 +465,15 @@ export default definePlugin({
         upload.spoiler = false;
     },
 
+    // spacebar's channel entity has a real `icon` field (upload hash, served from
+    // /channel-icons/{channel_id}/{hash}), but discord's client never parses it onto
+    // Channel, unlike group DMs which already do - these patches add the same handling
+    renderChannelIcon(channel: { id: string; icon: string; }) {
+        return ErrorBoundary.wrap(function ({ className }: { className?: string; }) {
+            return <img className={className} src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" />;
+        }, { noop: true });
+    },
+
     getEveryoneColorRole(guildRoles: Record<string, ColorRole>) {
         const everyone = Object.values(guildRoles).find(r => r.id === r.guildId);
         return everyone && everyone.color > 0 ? everyone : undefined;
@@ -630,6 +640,28 @@ export default definePlugin({
     },
 
     patches: [
+        {
+            find: "this.iconEmoji=e.iconEmoji,this.lastMessageId=",
+            replacement: {
+                match: /this\.iconEmoji=(\i)\.iconEmoji/,
+                replace: "this.icon=$1.icon,this.iconEmoji=$1.iconEmoji"
+            }
+        },
+        {
+            find: "icon_emoji),id:",
+            all: true,
+            replacement: {
+                match: /(?<!icon:\i,)iconEmoji:(\i)\((\i)\.icon_emoji\)/g,
+                replace: "icon:$2.icon,iconEmoji:$1($2.icon_emoji)"
+            }
+        },
+        {
+            find: '"ChannelItemIcon")',
+            replacement: {
+                match: /switch\((\i)\.type\)\{case (\i)\.rbe\.DM:/,
+                replace: "if($1.icon)return $self.renderChannelIcon($1);switch($1.type){case $2.rbe.DM:"
+            }
+        },
         {
             find: "qos_token:",
             // this was the main cause of the Identify loop, fuck whoever added this for no reason.
