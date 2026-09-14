@@ -468,13 +468,6 @@ export default definePlugin({
     // spacebar's channel entity has a real `icon` field (upload hash, served from
     // /channel-icons/{channel_id}/{hash}), but discord's client never parses it onto
     // Channel, unlike group DMs which already do - these patches add the same handling
-    // some update paths (channel reorder) construct a Channel from a partial payload
-    // that just doesn't carry icon at all - fall back to whatever ChannelStore already
-    // has so a position-only update doesn't wipe a previously known icon
-    getExistingChannelIcon(channelId: string) {
-        return ChannelStore.getChannel(channelId)?.icon;
-    },
-
     renderChannelIcon(channel: { id: string; icon: string; }) {
         return ErrorBoundary.wrap(function ({ className }: { className?: string; }) {
             return <img className={className} src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" />;
@@ -660,10 +653,20 @@ export default definePlugin({
 
     patches: [
         {
+            find: "recipients:i.recipients,bitrate:n.bitrate??i.bitrate}",
+            // CHANNEL_UPDATE payloads that omit icon (e.g. a rename) get merged onto the
+            // existing channel here - discord already re-adds bitrate the same way for the
+            // same reason, icon just needs the same treatment
+            replacement: {
+                match: /\.merge\(\{\.\.\.(\i),recipients:(\i)\.recipients,bitrate:\1\.bitrate\?\?\2\.bitrate\}\)/,
+                replace: ".merge({...$1,recipients:$2.recipients,bitrate:$1.bitrate??$2.bitrate,icon:$1.icon??$2.icon})"
+            }
+        },
+        {
             find: "this.iconEmoji=e.iconEmoji,this.lastMessageId=",
             replacement: {
                 match: /this\.iconEmoji=(\i)\.iconEmoji/,
-                replace: "this.icon=$1.icon??$self.getExistingChannelIcon($1.id),this.iconEmoji=$1.iconEmoji"
+                replace: "this.icon=$1.icon,this.iconEmoji=$1.iconEmoji"
             }
         },
         {
@@ -671,7 +674,7 @@ export default definePlugin({
             all: true,
             replacement: {
                 match: /(?<!icon:\i,)iconEmoji:(\i)\((\i)\.icon_emoji\)/g,
-                replace: "icon:$2.icon??$self.getExistingChannelIcon($2.id),iconEmoji:$1($2.icon_emoji)"
+                replace: "icon:$2.icon,iconEmoji:$1($2.icon_emoji)"
             }
         },
         {
