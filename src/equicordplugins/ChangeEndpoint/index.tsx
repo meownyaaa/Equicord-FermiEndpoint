@@ -11,7 +11,7 @@ import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
-import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter } from "@webpack/common";
+import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Toasts, useRef, useState } from "@webpack/common";
 import type { ReactNode } from "react";
 
 import "./components/styles.css";
@@ -474,6 +474,65 @@ export default definePlugin({
         }, { noop: true });
     },
 
+    // discord's channel settings save flow (nM's onSave) destructures a fixed field
+    // list and never mentions icon, same class of bug as the CHANNEL_UPDATE merge -
+    // rather than patch another opaque whitelist, apply icon changes as their own
+    // immediate PATCH instead of folding them into the buffered edit-and-save state
+    renderChannelIconEditor(channel: { id: string; icon?: string; }) {
+        const Comp = ErrorBoundary.wrap(function () {
+            const inputRef = useRef<HTMLInputElement>(null);
+            const [uploading, setUploading] = useState(false);
+
+            async function patchIcon(icon: string | null) {
+                setUploading(true);
+                try {
+                    await RestAPI.patch({ url: `/channels/${channel.id}`, body: { icon } });
+                    showToast(icon ? "channel icon updated" : "channel icon cleared", Toasts.Type.SUCCESS);
+                } catch (e) {
+                    showToast("failed to update channel icon", Toasts.Type.FAILURE);
+                } finally {
+                    setUploading(false);
+                }
+            }
+
+            function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => patchIcon(reader.result as string);
+                reader.readAsDataURL(file);
+            }
+
+            return (
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 0" }}>
+                    <div
+                        onClick={() => !uploading && inputRef.current?.click()}
+                        style={{
+                            width: 48, height: 48, borderRadius: "50%", overflow: "hidden",
+                            cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
+                            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                        }}
+                    >
+                        {channel.icon
+                            ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            : <WebsiteIcon />}
+                    </div>
+                    <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
+                    <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
+                        change icon
+                    </Button>
+                    {channel.icon && (
+                        <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
+                            remove
+                        </Button>
+                    )}
+                </div>
+            );
+        }, { noop: true });
+        return <Comp />;
+    },
+
     // this row is wrapped in React.memo with no comparator, and discord mutates the
     // channel object in place on CHANNEL_UPDATE rather than replacing it, so a changed
     // icon field never trips the default shallow prop compare - check it explicitly
@@ -693,6 +752,16 @@ export default definePlugin({
             replacement: {
                 match: /role:"img","aria-label":\i,className:\i\(\)\(\i\.\i,\i\),children:\i\}\)\}\)\}/,
                 replace: "$&,$self.channelIconMemoEqual"
+            }
+        },
+        {
+            // channel settings > overview has no icon field at all for guild channels -
+            // "renderChannelInfo"/"showVoiceSettings" are real method names (accessed via
+            // this.), not mangled, so this anchor is stable across discord's own renames
+            find: "this.renderChannelInfo(e,t),this.showVoiceSettings()",
+            replacement: {
+                match: /this\.renderChannelInfo\((\i),(\i)\)/,
+                replace: "this.renderChannelInfo($1,$2),$self.renderChannelIconEditor($1)"
             }
         },
         {
