@@ -671,7 +671,7 @@ export default definePlugin({
             all: true,
             replacement: {
                 match: /(?<!icon:\i,)iconEmoji:(\i)\((\i)\.icon_emoji\)/g,
-                replace: "icon:$2.icon,iconEmoji:$1($2.icon_emoji)"
+                replace: "icon:$2.icon??$self.getExistingChannelIcon($2.id),iconEmoji:$1($2.icon_emoji)"
             }
         },
         {
