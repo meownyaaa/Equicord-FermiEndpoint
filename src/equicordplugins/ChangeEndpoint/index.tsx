@@ -474,6 +474,16 @@ export default definePlugin({
         }, { noop: true });
     },
 
+    // this row is wrapped in React.memo with no comparator, and discord mutates the
+    // channel object in place on CHANNEL_UPDATE rather than replacing it, so a changed
+    // icon field never trips the default shallow prop compare - check it explicitly
+    channelIconMemoEqual(a: any, b: any) {
+        return a.channel === b.channel && a.channel.icon === b.channel.icon &&
+            a.className === b.className && a.containerClassName === b.containerClassName &&
+            a.locked === b.locked && a.hasActiveThreads === b.hasActiveThreads &&
+            a.hasUsersInVoiceChannel === b.hasUsersInVoiceChannel;
+    },
+
     getEveryoneColorRole(guildRoles: Record<string, ColorRole>) {
         const everyone = Object.values(guildRoles).find(r => r.id === r.guildId);
         return everyone && everyone.color > 0 ? everyone : undefined;
@@ -659,9 +669,20 @@ export default definePlugin({
         },
         {
             find: '"ChannelItemIcon")',
+            all: true,
             replacement: {
-                match: /switch\((\i)\.type\)\{case (\i)\.rbe\.DM:/,
+                match: /switch\((\i)\.type\)\{case (\i)\.rbe\.DM:/g,
                 replace: "if($1.icon)return $self.renderChannelIcon($1);switch($1.type){case $2.rbe.DM:"
+            }
+        },
+        {
+            // the icon-selector row is wrapped in a bare React.memo (no comparator),
+            // so an in-place channel.icon mutation on CHANNEL_UPDATE gets shallow-compared
+            // away and the row never re-renders - give it a comparator that also checks icon
+            find: '"ChannelItemIcon")',
+            replacement: {
+                match: /role:"img","aria-label":\i,className:\i\(\)\(\i\.\i,\i\),children:\i\}\)\}\)\}/,
+                replace: "$&,$self.channelIconMemoEqual"
             }
         },
         {
