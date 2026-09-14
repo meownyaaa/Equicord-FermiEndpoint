@@ -665,7 +665,7 @@ export default definePlugin({
         {
             find: "this.iconEmoji=e.iconEmoji,this.lastMessageId=",
             replacement: {
-                match: /this\.iconEmoji=(\i)\.iconEmoji/,
+                match: /this\.iconEmoji=(\i)\.iconEmoji/g,
                 replace: "this.icon=$1.icon,this.iconEmoji=$1.iconEmoji"
             }
         },
