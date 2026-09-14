@@ -807,11 +807,16 @@ export default definePlugin({
                 }
             ]
         },
+        {
+            find: "os_sdk_version=",
+            replacement: {
+                match: /(\i)\.os_sdk_version=\i\?\.split\("\."\)\[\d\]/g,
+                replace: "$1.os_sdk_version=void 0"
+            }
+        },
         // all that is to reduce any problems with Identify in the future
         // and to mainly reduce on the tracking sent over initially, which
-        // isnt needed on spacebar or spacebar-adjacent servers,
-        // although the desktop client doesnt work still and math stopped
-        // telling me what was causing it, maybe didnt see my messages?
+        // isnt needed on spacebar or spacebar-adjacent servers
         {
             find: "async uploadFiles(",
             replacement: {
