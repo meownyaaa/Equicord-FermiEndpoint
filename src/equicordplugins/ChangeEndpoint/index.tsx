@@ -10,7 +10,7 @@ import SettingsPlugin from "@plugins/_core/settings";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import definePlugin from "@utils/types";
-import { findByPropsLazy, findLazy, findStoreLazy } from "@webpack";
+import { findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
 import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Toasts, useRef, useState } from "@webpack/common";
 import type { ReactNode } from "react";
 
@@ -31,6 +31,8 @@ const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal"
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
 const UploadManager = findByPropsLazy("clearAll", "addFile");
 const UploadAttachmentStore = findByPropsLazy("getUploadCount");
+// fieldset wrapper used by every group in channel settings > overview (name, slowmode, content visibility...)
+const SettingsFieldset = findComponentByCodeLazy("tag:\"legend\"");
 
 interface HarmonyGuildFolder {
     id: number | null;
@@ -370,6 +372,10 @@ function uninstallReactionEmojiFix() {
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 // ^ lowkey forgot what this does, dont remove unless yk what it is
 
+// discord sends guild profile (server tag) reads/writes to /guilds/{id}/profile,
+// but spacebar never grew that route - it just uses /guilds/{id} for everything
+const GUILD_PROFILE_URL_RE = /(\/guilds\/\d+)\/profile$/;
+
 function stripIsSpoiler(body: string) {
     if (!body.includes('"is_spoiler"')) return body;
 
@@ -404,9 +410,17 @@ function installFetchSanitiser() {
 
     const OriginalFetch = originalFetch = window.fetch;
     window.fetch = (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const pathname = new URL(url, location.origin).pathname;
+
+        if (GUILD_PROFILE_URL_RE.test(pathname)) {
+            const newUrl = url.replace(GUILD_PROFILE_URL_RE, "$1");
+            logger.debug(`redirecting ${pathname} to the plain guild route, spacebar doesn't have a /profile endpoint`);
+            return OriginalFetch(newUrl, init);
+        }
+
         if (init && (init.method === "POST" || init.method === "PATCH") && typeof init.body === "string") {
-            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-            if (MESSAGE_URL_RE.test(new URL(url, location.origin).pathname)) {
+            if (MESSAGE_URL_RE.test(pathname)) {
                 init = { ...init, body: stripIsSpoiler(init.body) };
             }
         }
@@ -418,6 +432,32 @@ function uninstallFetchSanitiser() {
     if (!originalFetch) return;
     window.fetch = originalFetch;
     originalFetch = null;
+}
+
+let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
+
+function installXHRSanitiser() {
+    if (originalXHROpen) return;
+
+    const OriginalOpen = originalXHROpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method: string, url: string | URL, ...rest: any[]) {
+        const urlStr = url instanceof URL ? url.href : url;
+        const pathname = new URL(urlStr, location.origin).pathname;
+
+        if (GUILD_PROFILE_URL_RE.test(pathname)) {
+            url = urlStr.replace(GUILD_PROFILE_URL_RE, "$1");
+            logger.debug(`redirecting ${pathname} to the plain guild route, spacebar doesn't have a /profile endpoint`);
+        }
+
+        // @ts-ignore - passthrough of open()'s variadic rest args
+        return OriginalOpen.call(this, method, url, ...rest);
+    };
+}
+
+function uninstallXHRSanitiser() {
+    if (!originalXHROpen) return;
+    XMLHttpRequest.prototype.open = originalXHROpen;
+    originalXHROpen = null;
 }
 
 export default definePlugin({
@@ -505,29 +545,31 @@ export default definePlugin({
             }
 
             return (
-                <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 0" }}>
-                    <div
-                        onClick={() => !uploading && inputRef.current?.click()}
-                        style={{
-                            width: 48, height: 48, borderRadius: "50%", overflow: "hidden",
-                            cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
-                            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
-                        }}
-                    >
-                        {channel.icon
-                            ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            : <WebsiteIcon />}
-                    </div>
-                    <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
-                    <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
-                        change icon
-                    </Button>
-                    {channel.icon && (
-                        <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
-                            remove
+                <SettingsFieldset label="Channel Icon" description="Shown in the channel list in place of the default icon.">
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <div
+                            onClick={() => !uploading && inputRef.current?.click()}
+                            style={{
+                                width: 48, height: 48, borderRadius: "50%", overflow: "hidden",
+                                cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
+                                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                            }}
+                        >
+                            {channel.icon
+                                ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                : <WebsiteIcon />}
+                        </div>
+                        <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
+                        <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
+                            change icon
                         </Button>
-                    )}
-                </div>
+                        {channel.icon && (
+                            <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
+                                remove
+                            </Button>
+                        )}
+                    </div>
+                </SettingsFieldset>
             );
         }, { noop: true });
         return <Comp />;
@@ -672,6 +714,7 @@ export default definePlugin({
         startGuildOrderSync();
         startDMUnreadPoll();
         installFetchSanitiser();
+        installXHRSanitiser();
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
         installReactionEmojiFix();
@@ -704,6 +747,7 @@ export default definePlugin({
         stopGuildOrderSync();
         stopDMUnreadPoll();
         uninstallFetchSanitiser();
+        uninstallXHRSanitiser();
         uninstallGatewaySendSanitiser();
         uninstallDaveClientConnectGuard();
         uninstallReactionEmojiFix();
