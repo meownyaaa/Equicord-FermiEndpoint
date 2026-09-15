@@ -335,6 +335,39 @@ function uninstallDaveClientConnectGuard() {
 
 const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
 
+// spacebar has no boost system, so guilds always report tier 0 - every tier-gated
+// perk (animated icon, banner, bigger emoji/sticker slots, vanity url...) stays locked.
+// force every guild to tier 3 with the relevant feature flags before any store sees it.
+const MAX_PREMIUM_TIER = 3;
+const MAX_PREMIUM_SUBSCRIPTION_COUNT = 30;
+const BOOST_FEATURES = [
+    "ANIMATED_ICON", "ANIMATED_BANNER", "BANNER", "INVITE_SPLASH", "VANITY_URL",
+    "MORE_EMOJI", "MORE_STICKERS", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED",
+    "MEMBER_PROFILES"
+];
+
+function maxOutGuildPremium(guild: any) {
+    if (!guild) return;
+    guild.premium_tier = MAX_PREMIUM_TIER;
+    guild.premium_subscription_count = MAX_PREMIUM_SUBSCRIPTION_COUNT;
+    guild.features = Array.from(new Set([...(guild.features ?? []), ...BOOST_FEATURES]));
+}
+
+function installBoostPerkUnlocker() {
+    FluxDispatcher.addInterceptor(event => {
+        switch (event.type) {
+            case "GUILD_CREATE":
+            case "GUILD_UPDATE":
+                maxOutGuildPremium(event.guild);
+                break;
+            case "READY":
+                event.guilds?.forEach(maxOutGuildPremium);
+                break;
+        }
+        return false;
+    });
+}
+
 function fixReactionEmoji(emoji: any) {
     if (!emoji || emoji.id || !SNOWFLAKE_AS_NAME.test(emoji.name ?? "")) return;
     // some spacebar backends omit the emoji id on older reactions(unconfirmed) and dump the snowflake into name instead,
@@ -375,6 +408,22 @@ const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 // discord sends guild profile (server tag) reads/writes to /guilds/{id}/profile,
 // but spacebar never grew that route - it just uses /guilds/{id} for everything
 const GUILD_PROFILE_URL_RE = /(\/guilds\/\d+)\/profile$/;
+// profile-only fields the plain guild route doesn't know about, spacebar chokes on these
+const GUILD_PROFILE_ONLY_KEYS = ["description", "brand_color_primary", "traits", "game_application_ids", "visibility"];
+
+function stripGuildProfileOnlyFields(body: string) {
+    try {
+        const payload = JSON.parse(body);
+        for (const key of GUILD_PROFILE_ONLY_KEYS) delete payload[key];
+        if ("custom_banner" in payload) {
+            payload.banner = payload.custom_banner;
+            delete payload.custom_banner;
+        }
+        return JSON.stringify(payload);
+    } catch {
+        return body;
+    }
+}
 
 function stripIsSpoiler(body: string) {
     if (!body.includes('"is_spoiler"')) return body;
@@ -416,6 +465,9 @@ function installFetchSanitiser() {
         if (GUILD_PROFILE_URL_RE.test(pathname)) {
             const newUrl = url.replace(GUILD_PROFILE_URL_RE, "$1");
             logger.debug(`redirecting ${pathname} to the plain guild route, spacebar doesn't have a /profile endpoint`);
+            if (init && typeof init.body === "string") {
+                init = { ...init, body: stripGuildProfileOnlyFields(init.body) };
+            }
             return OriginalFetch(newUrl, init);
         }
 
@@ -435,6 +487,8 @@ function uninstallFetchSanitiser() {
 }
 
 let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
+let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
+const flaggedGuildProfileRequests = new WeakSet<XMLHttpRequest>();
 
 function installXHRSanitiser() {
     if (originalXHROpen) return;
@@ -447,10 +501,20 @@ function installXHRSanitiser() {
         if (GUILD_PROFILE_URL_RE.test(pathname)) {
             url = urlStr.replace(GUILD_PROFILE_URL_RE, "$1");
             logger.debug(`redirecting ${pathname} to the plain guild route, spacebar doesn't have a /profile endpoint`);
+            flaggedGuildProfileRequests.add(this);
         }
 
         // @ts-ignore - passthrough of open()'s variadic rest args
         return OriginalOpen.call(this, method, url, ...rest);
+    };
+
+    const OriginalSend = originalXHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
+        if (flaggedGuildProfileRequests.has(this)) {
+            flaggedGuildProfileRequests.delete(this);
+            if (typeof body === "string") body = stripGuildProfileOnlyFields(body);
+        }
+        return OriginalSend.call(this, body);
     };
 }
 
@@ -458,6 +522,10 @@ function uninstallXHRSanitiser() {
     if (!originalXHROpen) return;
     XMLHttpRequest.prototype.open = originalXHROpen;
     originalXHROpen = null;
+    if (originalXHRSend) {
+        XMLHttpRequest.prototype.send = originalXHRSend;
+        originalXHRSend = null;
+    }
 }
 
 export default definePlugin({
@@ -715,6 +783,7 @@ export default definePlugin({
         startDMUnreadPoll();
         installFetchSanitiser();
         installXHRSanitiser();
+        installBoostPerkUnlocker();
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
         installReactionEmojiFix();
