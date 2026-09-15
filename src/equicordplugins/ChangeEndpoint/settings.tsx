@@ -161,6 +161,15 @@ export const settings = definePluginSettings({
         default: false,
         restartNeeded: true
     },
+    legacyGuildOrderSync: {
+        type: OptionType.BOOLEAN,
+        description: "Reposition guilds to match the order saved on the deprecated /users/@me/settings endpoint " +
+            "instead of relying on Discord's native settings-proto sync. Only needed for backends that don't " +
+            "keep settings-proto in sync with legacy settings, like Fermo/Fermi. This fallback path won't be " +
+            "actively maintained going forward, enable at your own risk.",
+        default: false,
+        restartNeeded: true
+    },
     clearCache: {
         type: OptionType.COMPONENT,
         component: ClearCacheButton

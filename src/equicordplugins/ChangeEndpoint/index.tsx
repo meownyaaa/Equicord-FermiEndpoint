@@ -4,17 +4,18 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import "./components/styles.css";
+
 import ErrorBoundary from "@components/ErrorBoundary";
 import { WebsiteIcon } from "@components/Icons";
 import SettingsPlugin from "@plugins/_core/settings";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import definePlugin from "@utils/types";
+import type { GuildFeatures } from "@vencord/discord-types";
 import { findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
 import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Toasts, useRef, useState } from "@webpack/common";
 import type { ReactNode } from "react";
-
-import "./components/styles.css";
 
 import { PREDEFINED_SERVERS } from "./servers";
 import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
@@ -155,11 +156,15 @@ async function pollSavedGuildOrder() {
 const GUILD_ORDER_EVENTS = ["GUILD_MOVE_BY_ID", "GUILD_FOLDER_CREATE_LOCAL", "GUILD_FOLDER_EDIT_LOCAL", "GUILD_FOLDER_DELETE_LOCAL"];
 
 function startGuildOrderSync() {
-    if (pollingStarted) return;
-    pollingStarted = true;
-
-    pollSavedGuildOrder();
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.subscribe(e, schedulePush));
+
+    // legacy /settings and settings-proto aren't kept in sync server-side on some
+    // backends (fermo/fermi), so pushing local order there always keeps it from
+    // going stale. actually repositioning guilds FROM that data stays opt-in below,
+    // so it doesn't fight with discord's native settings-proto sync by default.
+    if (!settings.store.legacyGuildOrderSync || pollingStarted) return;
+    pollingStarted = true;
+    pollSavedGuildOrder();
 }
 
 function stopGuildOrderSync() {
@@ -170,9 +175,6 @@ function stopGuildOrderSync() {
     pollTimer = debounceTimer = null;
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, schedulePush));
 }
-// ^^ all of this needs to be reworked, /settings is deprecated
-// and could be removed entirely from spacebar at any point
-// to do
 
 const DM_CHANNEL_TYPE = 1;
 const GROUP_DM_CHANNEL_TYPE = 3;
@@ -339,11 +341,10 @@ const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
 // perk (animated icon, banner, bigger emoji/sticker slots, vanity url...) stays locked.
 // force every guild to tier 3 with the relevant feature flags before any store sees it.
 const MAX_PREMIUM_TIER = 3;
-const MAX_PREMIUM_SUBSCRIPTION_COUNT = 30;
-const BOOST_FEATURES = [
+const MAX_PREMIUM_SUBSCRIPTION_COUNT = 67;
+const BOOST_FEATURES: GuildFeatures[] = [
     "ANIMATED_ICON", "ANIMATED_BANNER", "BANNER", "INVITE_SPLASH", "VANITY_URL",
-    "MORE_EMOJI", "MORE_STICKERS", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED",
-    "MEMBER_PROFILES"
+    "MORE_EMOJI", "MORE_STICKERS", "MORE_SOUNDBOARD", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED"
 ];
 
 function maxOutGuildPremium(guild: any) {
@@ -353,7 +354,20 @@ function maxOutGuildPremium(guild: any) {
     guild.features = Array.from(new Set([...(guild.features ?? []), ...BOOST_FEATURES]));
 }
 
+// guilds that finished loading before this interceptor was installed never
+// pass through it, so they'd stay stuck at tier 0 forever. patch those directly too.
+function maxOutLoadedGuilds() {
+    for (const guild of GuildStore.getGuildsArray()) {
+        guild.premiumTier = MAX_PREMIUM_TIER;
+        guild.premiumSubscriberCount = MAX_PREMIUM_SUBSCRIPTION_COUNT;
+        for (const feature of BOOST_FEATURES) guild.features.add(feature);
+    }
+    GuildStore.emitChange();
+}
+
 function installBoostPerkUnlocker() {
+    maxOutLoadedGuilds();
+
     FluxDispatcher.addInterceptor(event => {
         switch (event.type) {
             case "GUILD_CREATE":
@@ -408,8 +422,9 @@ const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 // discord sends guild profile (server tag) reads/writes to /guilds/{id}/profile,
 // but spacebar never grew that route - it just uses /guilds/{id} for everything
 const GUILD_PROFILE_URL_RE = /(\/guilds\/\d+)\/profile$/;
-// profile-only fields the plain guild route doesn't know about, spacebar chokes on these
-const GUILD_PROFILE_ONLY_KEYS = ["description", "brand_color_primary", "traits", "game_application_ids", "visibility"];
+// profile-only fields the plain guild route doesn't know about, spacebar chokes on these.
+// description is NOT one of these - GuildUpdateSchema on /guilds/{id} supports it directly.
+const GUILD_PROFILE_ONLY_KEYS = ["brand_color_primary", "traits", "game_application_ids", "visibility"];
 
 function stripGuildProfileOnlyFields(body: string) {
     try {
@@ -420,6 +435,25 @@ function stripGuildProfileOnlyFields(body: string) {
             delete payload.custom_banner;
         }
         return JSON.stringify(payload);
+    } catch {
+        return body;
+    }
+}
+
+// the client's guild profile response parser reads icon_hash/custom_banner_hash,
+// not icon/banner - the plain guild route we redirect to only has the latter,
+// so without this the icon/banner show up blank until something else refetches them
+function expandGuildProfileFields(payload: any) {
+    if (payload && typeof payload === "object") {
+        if ("icon" in payload) payload.icon_hash = payload.icon;
+        if ("banner" in payload) payload.custom_banner_hash = payload.banner;
+    }
+    return payload;
+}
+
+function expandToProfileShape(body: string) {
+    try {
+        return JSON.stringify(expandGuildProfileFields(JSON.parse(body)));
     } catch {
         return body;
     }
@@ -458,9 +492,9 @@ function installFetchSanitiser() {
     if (originalFetch) return;
 
     const OriginalFetch = originalFetch = window.fetch;
-    window.fetch = (input, init) => {
+    window.fetch = async (input, init) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        const pathname = new URL(url, location.origin).pathname;
+        const { pathname } = new URL(url, location.origin);
 
         if (GUILD_PROFILE_URL_RE.test(pathname)) {
             const newUrl = url.replace(GUILD_PROFILE_URL_RE, "$1");
@@ -468,7 +502,13 @@ function installFetchSanitiser() {
             if (init && typeof init.body === "string") {
                 init = { ...init, body: stripGuildProfileOnlyFields(init.body) };
             }
-            return OriginalFetch(newUrl, init);
+            const response = await OriginalFetch(newUrl, init);
+            const text = await response.text();
+            return new Response(expandToProfileShape(text), {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers
+            });
         }
 
         if (init && (init.method === "POST" || init.method === "PATCH") && typeof init.body === "string") {
@@ -490,18 +530,47 @@ let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
 let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
 const flaggedGuildProfileRequests = new WeakSet<XMLHttpRequest>();
 
+function requireNativeGetter(descriptor: PropertyDescriptor | undefined): () => any {
+    if (!descriptor?.get) throw new Error("expected a native accessor getter");
+    return descriptor.get;
+}
+
+const xhrResponseTextGetter = requireNativeGetter(Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, "responseText"));
+const xhrResponseGetter = requireNativeGetter(Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, "response"));
+
+// mirrors expandToProfileShape for XHR - responseText/response are native getters,
+// so they're overridden per-instance rather than patched at the body level like send()
+function installGuildProfileResponseExpander(xhr: XMLHttpRequest) {
+    Object.defineProperty(xhr, "responseText", {
+        configurable: true,
+        get() {
+            const raw = xhrResponseTextGetter.call(this);
+            return this.readyState === 4 ? expandToProfileShape(raw) : raw;
+        }
+    });
+    Object.defineProperty(xhr, "response", {
+        configurable: true,
+        get() {
+            const raw = xhrResponseGetter.call(this);
+            if (this.readyState !== 4) return raw;
+            return this.responseType === "json" ? expandGuildProfileFields(raw) : expandToProfileShape(raw);
+        }
+    });
+}
+
 function installXHRSanitiser() {
     if (originalXHROpen) return;
 
     const OriginalOpen = originalXHROpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (method: string, url: string | URL, ...rest: any[]) {
         const urlStr = url instanceof URL ? url.href : url;
-        const pathname = new URL(urlStr, location.origin).pathname;
+        const { pathname } = new URL(urlStr, location.origin);
 
         if (GUILD_PROFILE_URL_RE.test(pathname)) {
             url = urlStr.replace(GUILD_PROFILE_URL_RE, "$1");
             logger.debug(`redirecting ${pathname} to the plain guild route, spacebar doesn't have a /profile endpoint`);
             flaggedGuildProfileRequests.add(this);
+            installGuildProfileResponseExpander(this);
         }
 
         // @ts-ignore - passthrough of open()'s variadic rest args
@@ -1118,7 +1187,7 @@ export default definePlugin({
                     `(${match}||"Electron"===${fn}().name&&${ver}>=1)`
             }
         },
-        /*{
+        /* {
             find: "get platformAlwaysPermits(){return",
             replacement: {
                 match: /get platformAlwaysPermits\(\)\{return.{0,100}?\.checkPermissionsEnabled\}/,
@@ -1186,7 +1255,7 @@ export default definePlugin({
             replacement: {
                 match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
                 replace: 'spoiler:($2.filename??$2.originalItem?.filename)?.startsWith("SPOILER_")||$1',
-                /* 
+                /*
                     might not be functional? i get a warning about this in logs, pretty sure the other
                     stuff is patching spoilers, not this
                 */
@@ -1233,7 +1302,7 @@ export default definePlugin({
             replacement: {
                 match: /(gif_provider:(\i)\.provider.{0,150}?source_object:"GIF Picker",gif_url:\2\.url,gif_id:\2\.id\};)(\i)\(\2\.url,/,
                 replace: "$1$3($self.resolveGifUrl($2),"
-                /* 
+                /*
                    gotta make the gif picker patches better at some point, right now theyre basic
                    and dont really fix the main problems, although they are good enough to work for
                    now, i dont feel like they will last especially when i eventually give up on this
