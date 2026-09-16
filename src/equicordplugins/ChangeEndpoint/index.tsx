@@ -775,30 +775,32 @@ export default definePlugin({
 
             return (
                 <SettingsFieldset label="Channel Icon">
-                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        <div
-                            onClick={() => !uploading && inputRef.current?.click()}
-                            style={{
-                                width: 48, height: 48, borderRadius: "8px", overflow: "hidden",
-                                cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
-                                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
-                            }}
-                        >
-                            {channel.icon
-                                ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                                : <WebsiteIcon />}
-                        </div>
-                        <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
-                        <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
-                            Change Icon
-                        </Button>
-                        {channel.icon && (
-                            <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
-                                Remove
+                    <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                            <div
+                                onClick={() => !uploading && inputRef.current?.click()}
+                                style={{
+                                    width: 48, height: 48, borderRadius: "8px", overflow: "hidden",
+                                    cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
+                                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                                }}
+                            >
+                                {channel.icon
+                                    ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                                    : <WebsiteIcon />}
+                            </div>
+                            <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
+                            <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
+                                Change Icon
                             </Button>
-                        )}
+                            {channel.icon && (
+                                <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
+                                    Remove
+                                </Button>
+                            )}
+                        </div>
+                        <Text variant="text-xs/normal" color="text-muted" style={{ marginTop: "8px" }}>Shown in the channel list in place of the default icon.</Text>
                     </div>
-                    <Text variant="text-xs/normal" color="text-muted" style={{ marginTop: "8px" }}>Shown in the channel list in place of the default icon.</Text>
                 </SettingsFieldset>
             );
         }, { noop: true });
