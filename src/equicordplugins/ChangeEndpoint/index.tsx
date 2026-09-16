@@ -597,6 +597,18 @@ function uninstallXHRSanitiser() {
     }
 }
 
+// discord only ever recognises its own INVITE_HOST (discord.gg) as an invite link.
+// add more alternate invite domains here - host is compared case-sensitively after
+// stripping a leading "www.", pathPrefix is stripped before matching the invite code.
+const ALT_INVITE_HOSTS: { host: string; pathPrefix: string; }[] = [
+    { host: "sbar.fyi", pathPrefix: "/i" }
+];
+
+function findAltInviteHost(url: { host?: string | null; pathname?: string | null; }) {
+    const host = url.host?.replace(/^www\./i, "");
+    return ALT_INVITE_HOSTS.find(h => h.host === host);
+}
+
 export default definePlugin({
     name: "ChangeEndpoint",
     description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one).",
@@ -612,6 +624,16 @@ export default definePlugin({
         "Open ChangeEndpoint": () => {
             SettingsRouter.openUserSettings("equicord_change_endpoint_panel");
         },
+    },
+
+    getAltInviteRemainingPath(url: { host?: string | null; pathname?: string | null; }) {
+        const alt = findAltInviteHost(url);
+        if (!alt || !url.pathname?.startsWith(alt.pathPrefix)) return null;
+        return url.pathname.slice(alt.pathPrefix.length) || null;
+    },
+
+    isAltInviteHost(url: { host?: string | null; }) {
+        return findAltInviteHost(url) != null;
     },
 
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
@@ -1351,6 +1373,23 @@ export default definePlugin({
                    break the entire client; see https://softgaypaws.com/assets/etc/example-m3sD.png
                 */
             }
+        },
+        {
+            // plain "window.GLOBAL_ENV.INVITE_HOST" also matches an unrelated env
+            // validation module - anchor on the K() call to hit the right one
+            find: "K(window.GLOBAL_ENV.INVITE_HOST)",
+            // discord only checks its own INVITE_HOST for invite links (see ALT_INVITE_HOSTS
+            // above) - both spots that check the invite host get an alternate-host fallback
+            replacement: [
+                {
+                    match: /let \i=z\(\i,(\i)\)/,
+                    replace: "$&??$self.getAltInviteRemainingPath($1)"
+                },
+                {
+                    match: /if\(\$\((\i),(\i)\)\)return!0/,
+                    replace: "if($($1,$2)||$self.isAltInviteHost($2))return!0"
+                }
+            ]
         },
     ]
 });
