@@ -11,10 +11,11 @@ import { WebsiteIcon } from "@components/Icons";
 import SettingsPlugin from "@plugins/_core/settings";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
+import { openModalLazy } from "@utils/modal";
 import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures } from "@vencord/discord-types";
-import { findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Toasts, useRef, useState } from "@webpack/common";
+import { extractAndLoadChunksLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
+import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, useState } from "@webpack/common";
 import type { ReactNode } from "react";
 
 import { PREDEFINED_SERVERS } from "./servers";
@@ -41,6 +42,14 @@ const UploadManager = findByPropsLazy("clearAll", "addFile");
 const UploadAttachmentStore = findByPropsLazy("getUploadCount");
 // fieldset wrapper used by every group in channel settings > overview (name, slowmode, content visibility...)
 const SettingsFieldset = findComponentByCodeLazy("tag:\"legend\"");
+
+// discord's own avatar/icon crop modal, chunked separately from the settings page that normally opens it
+const loadIconCropModalChunks = extractAndLoadChunksLazy(["GUILD_ICON", "imageUri:", "onCrop:"]);
+const IconCropModal = ErrorBoundary.wrap(findComponentByCodeLazy("showUpsellHeader", "cropAspectRatio"), { noop: true });
+
+interface IconCropResult {
+    imageUri: string;
+}
 
 interface HarmonyGuildFolder {
     id: number | null;
@@ -164,11 +173,6 @@ const GUILD_ORDER_EVENTS = ["GUILD_MOVE_BY_ID", "GUILD_FOLDER_CREATE_LOCAL", "GU
 
 function startGuildOrderSync() {
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.subscribe(e, schedulePush));
-
-    // legacy /settings and settings-proto aren't kept in sync server-side on some
-    // backends (fermo/fermi), so pushing local order there always keeps it from
-    // going stale. actually repositioning guilds FROM that data stays opt-in below,
-    // so it doesn't fight with discord's native settings-proto sync by default.
     if (!settings.store.legacyGuildOrderSync || pollingStarted) return;
     pollingStarted = true;
     pollSavedGuildOrder();
@@ -346,12 +350,6 @@ function uninstallDaveClientConnectGuard() {
 
 let originalGetActivities: typeof PresenceStore.getActivities | null = null;
 
-// PresenceStore.getActivities collapses multiple simultaneous "Playing" activities
-// down to just the most recent one - getUnfilteredActivities skips that collapse
-// entirely, so redirecting to it brings back showing more than one game at once.
-// installed on the live store instance instead of a webpack patch on its module
-// source, since that source patch loses a race against PresenceStore's own module
-// being required before ChangeEndpoint's patches finish registering
 function installActivityUnfilter() {
     if (originalGetActivities) return;
     originalGetActivities = PresenceStore.getActivities;
@@ -385,14 +383,6 @@ function stopWebEngineGoLiveSource() {
 
 let originalStreamDispatch: typeof FluxDispatcher.dispatch | null = null;
 
-// discord's own STREAM_START/STREAM_STOP flux handlers never touch the web
-// MediaEngine at all (confirmed live - they only update unrelated ui-side state),
-// so screen share needs to be driven directly. patching the action creators that
-// dispatch these loses a race against those modules being required early, same
-// as PresenceStore above, and worse, their exports are getter-only (real esm
-// bindings) so they can't be reassigned at runtime either - hooking the dispatch
-// itself sidesteps both problems, since FluxDispatcher.dispatch is just a plain,
-// reassignable method with no such race
 function installGoLiveDispatchHook() {
     if (originalStreamDispatch) return;
     const original = FluxDispatcher.dispatch.bind(FluxDispatcher);
@@ -415,9 +405,7 @@ function uninstallGoLiveDispatchHook() {
 
 const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
 
-// spacebar has no boost system, so guilds always report tier 0 - every tier-gated
-// perk (animated icon, banner, bigger emoji/sticker slots, vanity url...) stays locked.
-// force every guild to tier 3 with the relevant feature flags before any store sees it.
+// six seveennnnnnnnn (boosts amount to unlock boost paywalled features)
 const MAX_PREMIUM_TIER = 3;
 const MAX_PREMIUM_SUBSCRIPTION_COUNT = 67;
 const BOOST_FEATURES: GuildFeatures[] = [
@@ -675,9 +663,6 @@ function uninstallXHRSanitiser() {
     }
 }
 
-// discord only ever recognises its own INVITE_HOST (discord.gg) as an invite link.
-// add more alternate invite domains here - host is compared case-sensitively after
-// stripping a leading "www.", pathPrefix is stripped before matching the invite code.
 const ALT_INVITE_HOSTS: { host: string; pathPrefix: string; }[] = [
     { host: "sbar.fyi", pathPrefix: "/i" }
 ];
@@ -742,19 +727,12 @@ export default definePlugin({
         upload.spoiler = false;
     },
 
-    // spacebar's channel entity has a real `icon` field (upload hash, served from
-    // /channel-icons/{channel_id}/{hash}), but discord's client never parses it onto
-    // Channel, unlike group DMs which already do - these patches add the same handling
     renderChannelIcon(channel: { id: string; icon: string; }) {
         return ErrorBoundary.wrap(function ({ className }: { className?: string; }) {
             return <img className={className} src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" />;
         }, { noop: true });
     },
 
-    // discord's channel settings save flow (nM's onSave) destructures a fixed field
-    // list and never mentions icon, same class of bug as the CHANNEL_UPDATE merge -
-    // rather than patch another opaque whitelist, apply icon changes as their own
-    // immediate PATCH instead of folding them into the buffered edit-and-save state
     renderChannelIconEditor(channel: { id: string; icon?: string; }) {
         const Comp = ErrorBoundary.wrap(function () {
             const inputRef = useRef<HTMLInputElement>(null);
@@ -772,49 +750,61 @@ export default definePlugin({
                 }
             }
 
-            function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+            async function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (!file) return;
+
                 const reader = new FileReader();
-                reader.onload = () => patchIcon(reader.result as string);
-                reader.readAsDataURL(file);
+                const imageUri = await new Promise<string>(resolve => {
+                    reader.onload = () => resolve(reader.result as string);
+                    reader.readAsDataURL(file);
+                });
+
+                await loadIconCropModalChunks();
+                openModalLazy(async () => props => (
+                    <IconCropModal
+                        uploadType="GUILD_ICON"
+                        imageUri={imageUri}
+                        file={file}
+                        onCrop={(result: IconCropResult) => patchIcon(result.imageUri)}
+                        {...props}
+                    />
+                ));
             }
 
             return (
-                <SettingsFieldset label="Channel Icon" description="Shown in the channel list in place of the default icon.">
+                <SettingsFieldset label="Channel Icon">
                     <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                         <div
                             onClick={() => !uploading && inputRef.current?.click()}
                             style={{
-                                width: 48, height: 48, borderRadius: "50%", overflow: "hidden",
+                                width: 48, height: 48, borderRadius: "8px", overflow: "hidden",
                                 cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
                                 display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
                             }}
                         >
                             {channel.icon
-                                ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                                 : <WebsiteIcon />}
                         </div>
                         <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
                         <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
-                            change icon
+                            Change Icon
                         </Button>
                         {channel.icon && (
                             <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
-                                remove
+                                Remove
                             </Button>
                         )}
                     </div>
+                    <Text variant="text-xs/normal" color="text-muted" style={{ marginTop: "8px" }}>Shown in the channel list in place of the default icon.</Text>
                 </SettingsFieldset>
             );
         }, { noop: true });
-        return <Comp />;
+        return <Comp key="channel-icon-editor" />;
     },
 
-    // this row is wrapped in React.memo with no comparator, and discord mutates the
-    // channel object in place on CHANNEL_UPDATE rather than replacing it, so a changed
-    // icon field never trips the default shallow prop compare - check it explicitly
     channelIconMemoEqual(a: any, b: any) {
         return a.channel === b.channel && a.channel.icon === b.channel.icon &&
             a.className === b.className && a.containerClassName === b.containerClassName &&
@@ -1043,13 +1033,14 @@ export default definePlugin({
             }
         },
         {
-            // channel settings > overview has no icon field at all for guild channels -
-            // "renderChannelInfo"/"showVoiceSettings" are real method names (accessed via
-            // this.), not mangled, so this anchor is stable across discord's own renames
-            find: "this.renderChannelInfo(e,t),this.showVoiceSettings()",
+            // channel settings > overview has no icon field at all for guild channels - inject
+            // ours into renderChannelInfo's own field list, right after the topic field and
+            // before the (forum-only, otherwise null) post-template field, so it lands between
+            // "Channel Topic" and "Slowmode" instead of floating as its own top-level section
+            find: "this.getChannelTopicTextAreaChannel(",
             replacement: {
-                match: /this\.renderChannelInfo\((\i),(\i)\)/,
-                replace: "this.renderChannelInfo($1,$2),$self.renderChannelIconEditor($1)"
+                match: /\i&&\i&&!(\i)\.isGameInvitesChannel\(\)\?.{0,300}?:null(?=,\i=\i\.isForumLikeChannel\(\))/,
+                replace: "[$self.renderChannelIconEditor($1),$&]"
             }
         },
         {
