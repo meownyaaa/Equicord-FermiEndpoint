@@ -21,18 +21,9 @@ import { PREDEFINED_SERVERS } from "./servers";
 import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
 import { DiscordSpoiler } from "./spoiler";
 
-// resolves to the AuthenticationActionCreators module. plenty of unrelated locale
-// string-table modules are proxies that answer truthy (even for made-up property
-// names) with an anonymous getter closure for anything - checking the function's
-// own name rules those out, since the real logoutInternal method isn't anonymous
 const AuthActions = findLazy(m => typeof m?.A?.logoutInternal === "function" && m.A.logoutInternal.name === "logoutInternal" && typeof m.A.login === "function");
 const Native = VencordNative.pluginHelpers.ChangeEndpoint as PluginNative<typeof import("./native")>;
 
-// @vencord/discord-types' MediaEngine doesn't match what's actually on this build -
-// getDesktopSource() there takes no args and returns an object, but the real one
-// takes a quality descriptor and returns a plain source id string, and setGoLiveSource
-// lives on the engine itself rather than on MediaEngineConnection. typed against what
-// we've actually confirmed live instead of the (wrong, for this build) shipped types.
 interface GoLiveEngine {
     getDesktopSource(quality: { width: number; height: number; }, wantsAudio: boolean): Promise<string>;
     // null clears the current desktop source for that context
