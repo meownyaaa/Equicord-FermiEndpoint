@@ -11,18 +11,34 @@ import { WebsiteIcon } from "@components/Icons";
 import SettingsPlugin from "@plugins/_core/settings";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
-import definePlugin from "@utils/types";
+import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures } from "@vencord/discord-types";
 import { findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Toasts, useRef, useState } from "@webpack/common";
+import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Toasts, useRef, useState } from "@webpack/common";
 import type { ReactNode } from "react";
 
 import { PREDEFINED_SERVERS } from "./servers";
 import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
 import { DiscordSpoiler } from "./spoiler";
 
-// resolves to the AuthenticationActionCreators module, exposes logoutInternal
-const AuthActions = findLazy(m => m?.A?.logoutInternal);
+// resolves to the AuthenticationActionCreators module. plenty of unrelated locale
+// string-table modules are proxies that answer truthy (even for made-up property
+// names) with an anonymous getter closure for anything - checking the function's
+// own name rules those out, since the real logoutInternal method isn't anonymous
+const AuthActions = findLazy(m => typeof m?.A?.logoutInternal === "function" && m.A.logoutInternal.name === "logoutInternal" && typeof m.A.login === "function");
+const Native = VencordNative.pluginHelpers.ChangeEndpoint as PluginNative<typeof import("./native")>;
+
+// @vencord/discord-types' MediaEngine doesn't match what's actually on this build -
+// getDesktopSource() there takes no args and returns an object, but the real one
+// takes a quality descriptor and returns a plain source id string, and setGoLiveSource
+// lives on the engine itself rather than on MediaEngineConnection. typed against what
+// we've actually confirmed live instead of the (wrong, for this build) shipped types.
+interface GoLiveEngine {
+    getDesktopSource(quality: { width: number; height: number; }, wantsAudio: boolean): Promise<string>;
+    // null clears the current desktop source for that context
+    setGoLiveSource(source: { desktopDescription: { id: string; }; } | null, context: "stream"): void;
+}
+const GoLiveMediaEngineStore = findStoreLazy("MediaEngineStore") as { getMediaEngine(): GoLiveEngine; };
 import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 import { CustomVideoPlayer } from "./videoPlayer";
 
@@ -311,6 +327,8 @@ let originalHandleClientConnect: ((e: unknown, ...rest: unknown[]) => unknown) |
 function toArray(value: unknown): unknown[] {
     if (Array.isArray(value)) return value;
     if (value == null) return [];
+    // a bare user id string is iterable char-by-char, which isn't what we want here
+    if (typeof value === "string") return [value];
     if (typeof (value as any)[Symbol.iterator] === "function") return Array.from(value as Iterable<unknown>);
     return Object.values(value as object);
 }
@@ -333,6 +351,75 @@ function uninstallDaveClientConnectGuard() {
 
     DaveHandlerModule.prototype._handleClientConnect = originalHandleClientConnect;
     originalHandleClientConnect = null;
+}
+
+let originalGetActivities: typeof PresenceStore.getActivities | null = null;
+
+// PresenceStore.getActivities collapses multiple simultaneous "Playing" activities
+// down to just the most recent one - getUnfilteredActivities skips that collapse
+// entirely, so redirecting to it brings back showing more than one game at once.
+// installed on the live store instance instead of a webpack patch on its module
+// source, since that source patch loses a race against PresenceStore's own module
+// being required before ChangeEndpoint's patches finish registering
+function installActivityUnfilter() {
+    if (originalGetActivities) return;
+    originalGetActivities = PresenceStore.getActivities;
+    PresenceStore.getActivities = (userId: string, guildId?: string) => PresenceStore.getUnfilteredActivities(userId, guildId);
+}
+
+function uninstallActivityUnfilter() {
+    if (!originalGetActivities) return;
+    PresenceStore.getActivities = originalGetActivities;
+    originalGetActivities = null;
+}
+
+async function startWebEngineGoLiveSource(sourceId: string, sourceName?: string) {
+    try {
+        await Native.setPendingScreenShareSource(sourceName ?? null);
+        const engine = GoLiveMediaEngineStore.getMediaEngine();
+        const desktopSourceId = await engine.getDesktopSource({ width: 1920, height: 1080 }, true);
+        engine.setGoLiveSource({ desktopDescription: { id: desktopSourceId } }, "stream");
+    } catch (e) {
+        logger.error("Failed to start web engine screen share source", e);
+    }
+}
+
+function stopWebEngineGoLiveSource() {
+    try {
+        GoLiveMediaEngineStore.getMediaEngine().setGoLiveSource(null, "stream");
+    } catch (e) {
+        logger.error("Failed to stop web engine screen share source", e);
+    }
+}
+
+let originalStreamDispatch: typeof FluxDispatcher.dispatch | null = null;
+
+// discord's own STREAM_START/STREAM_STOP flux handlers never touch the web
+// MediaEngine at all (confirmed live - they only update unrelated ui-side state),
+// so screen share needs to be driven directly. patching the action creators that
+// dispatch these loses a race against those modules being required early, same
+// as PresenceStore above, and worse, their exports are getter-only (real esm
+// bindings) so they can't be reassigned at runtime either - hooking the dispatch
+// itself sidesteps both problems, since FluxDispatcher.dispatch is just a plain,
+// reassignable method with no such race
+function installGoLiveDispatchHook() {
+    if (originalStreamDispatch) return;
+    const original = FluxDispatcher.dispatch.bind(FluxDispatcher);
+    originalStreamDispatch = original;
+    FluxDispatcher.dispatch = (payload: any) => {
+        if (payload?.type === "STREAM_START" && payload.sourceId != null) {
+            startWebEngineGoLiveSource(payload.sourceId, payload.sourceName);
+        } else if (payload?.type === "STREAM_STOP") {
+            stopWebEngineGoLiveSource();
+        }
+        return original(payload);
+    };
+}
+
+function uninstallGoLiveDispatchHook() {
+    if (!originalStreamDispatch) return;
+    FluxDispatcher.dispatch = originalStreamDispatch;
+    originalStreamDispatch = null;
 }
 
 const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
@@ -878,6 +965,7 @@ export default definePlugin({
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
         installReactionEmojiFix();
+        installActivityUnfilter();
 
         SettingsPlugin.customEntries.push({
             key: "equicord_change_endpoint",
@@ -887,6 +975,9 @@ export default definePlugin({
         });
 
         if (typeof DiscordNative === "undefined") return;
+
+        Native.registerDisplayMediaHandler();
+        installGoLiveDispatchHook();
 
         const originalQuery = navigator.permissions.query.bind(navigator.permissions);
         navigator.permissions.query = (descriptor: PermissionDescriptor) => {
@@ -911,6 +1002,8 @@ export default definePlugin({
         uninstallGatewaySendSanitiser();
         uninstallDaveClientConnectGuard();
         uninstallReactionEmojiFix();
+        uninstallActivityUnfilter();
+        uninstallGoLiveDispatchHook();
         removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
     },
 
@@ -1390,6 +1483,16 @@ export default definePlugin({
                     replace: "if($($1,$2)||$self.isAltInviteHost($2))return!0"
                 }
             ]
+        },
+        {
+            find: "_maybeRefuseDaveDowngrade(",
+            // spacebar backends never speak DAVE (voice e2ee) at all, so this always
+            // sees a "downgrade" to version 0 and disconnects - refusing a downgrade
+            // only makes sense against a backend that had dave to downgrade from
+            replacement: {
+                match: /_maybeRefuseDaveDowngrade\((\i),(\i),(\i)\)\{/,
+                replace: "_maybeRefuseDaveDowngrade($1,$2,$3){return!1;"
+            }
         },
     ]
 });
