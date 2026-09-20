@@ -9,6 +9,7 @@ import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
+import { ActivityType } from "@vencord/discord-types/enums";
 import { ApplicationAssetUtils, FluxDispatcher, IconUtils, UserStore } from "@webpack/common";
 
 enum StatsDisplay {
@@ -19,10 +20,40 @@ enum StatsDisplay {
 export async function getApplicationAsset(key: string): Promise<string> {
     if (/https?:\/\/(cdn|media)\.discordapp\.(com|net)\/attachments\//.test(key))
         return "mp:" + key.replace(/https?:\/\/(cdn|media)\.discordapp\.(com|net)\//, "");
-    return (await ApplicationAssetUtils.fetchAssetIds("0", [key]))[0];
+    return (await ApplicationAssetUtils.fetchAssetIds(settings.store.appID || "0", [key]))[0];
 }
 
 const settings = definePluginSettings({
+    appID: {
+        type: OptionType.STRING,
+        description: "The application ID to use for your RPC.",
+        default: "",
+        restartNeeded: false,
+        isValid: (value: string) => !value || /^\d{16,21}$/.test(value) || "Must be a valid Application ID",
+        onChange: () => updateData()
+    },
+    type: {
+        type: OptionType.SELECT,
+        description: "The activity type of the RPC.",
+        options: [
+            { value: ActivityType.PLAYING, label: "Playing" },
+            { value: ActivityType.STREAMING, label: "Streaming" },
+            { value: ActivityType.LISTENING, label: "Listening" },
+            { value: ActivityType.WATCHING, label: "Watching" },
+            { value: ActivityType.COMPETING, label: "Competing", default: true }
+        ],
+        restartNeeded: false,
+        onChange: () => updateData()
+    },
+    streamLink: {
+        type: OptionType.STRING,
+        description: "The Twitch or YouTube link to use when the activity type is Streaming.",
+        default: "",
+        restartNeeded: false,
+        disabled: (): boolean => settings.store.type !== ActivityType.STREAMING,
+        isValid: (value: string) => !value || /https?:\/\/(www\.)?(twitch\.tv|youtube\.com)\/\w+/.test(value) || "Must be a valid Twitch or YouTube link.",
+        onChange: () => updateData()
+    },
     assetURL: {
         type: OptionType.STRING,
         description: "The image to use for your RPC. Your profile picture is used if left blank.",
@@ -64,10 +95,11 @@ async function setRpc(disable = false, details?: string) {
         || IconUtils.getDefaultAvatarURL(UserStore.getCurrentUser().id);
 
     const activity = {
-        application_id: "0",
+        application_id: settings.store.appID || "0",
         name: settings.store.RPCTitle,
         details: details || "No info right now :(",
-        type: 0,
+        type: settings.store.type,
+        url: settings.store.type === ActivityType.STREAMING ? settings.store.streamLink : undefined,
         flags: 1,
         assets: {
             large_image: await getApplicationAsset(fallbackImage)
@@ -119,7 +151,7 @@ async function updateData() {
 
         case StatsDisplay.MessagesSentAllTime: {
             const messagesAllTime = (await DataStore.get("RPCStatsAllTimeMessages")) ?? 0;
-            setRpc(false, `Messages sent all time: ${messagesAllTime}`);
+            setRpc(false, `All time msg count: ${messagesAllTime}`);
             break;
         }
     }
