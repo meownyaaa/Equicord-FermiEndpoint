@@ -663,13 +663,11 @@ function uninstallXHRSanitiser() {
     }
 }
 
-const ALT_INVITE_HOSTS: { host: string; pathPrefix: string; }[] = [
-    { host: "sbar.fyi", pathPrefix: "/i" }
-];
+const ALT_INVITE_HOST = "sbar.fyi";
+const ALT_INVITE_PATHS = ["/invite", "/i"];
 
-function findAltInviteHost(url: { host?: string | null; pathname?: string | null; }) {
-    const host = url.host?.replace(/^www\./i, "");
-    return ALT_INVITE_HOSTS.find(h => h.host === host);
+function isAltInviteHostName(host?: string | null) {
+    return host === ALT_INVITE_HOST || !!host?.endsWith(`.${ALT_INVITE_HOST}`);
 }
 
 export default definePlugin({
@@ -690,13 +688,13 @@ export default definePlugin({
     },
 
     getAltInviteRemainingPath(url: { host?: string | null; pathname?: string | null; }) {
-        const alt = findAltInviteHost(url);
-        if (!alt || !url.pathname?.startsWith(alt.pathPrefix)) return null;
-        return url.pathname.slice(alt.pathPrefix.length) || null;
+        if (!isAltInviteHostName(url.host)) return null;
+        const prefix = ALT_INVITE_PATHS.find(p => url.pathname?.startsWith(`${p}/`));
+        return prefix ? url.pathname?.slice(prefix.length) ?? null : null;
     },
 
     isAltInviteHost(url: { host?: string | null; }) {
-        return findAltInviteHost(url) != null;
+        return isAltInviteHostName(url.host);
     },
 
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
@@ -1455,7 +1453,7 @@ export default definePlugin({
             // plain "window.GLOBAL_ENV.INVITE_HOST" also matches an unrelated env
             // validation module - anchor on the K() call to hit the right one
             find: "K(window.GLOBAL_ENV.INVITE_HOST)",
-            // discord only checks its own INVITE_HOST for invite links (see ALT_INVITE_HOSTS
+            // discord only checks its own INVITE_HOST for invite links (see ALT_INVITE_HOST
             // above) - both spots that check the invite host get an alternate-host fallback
             replacement: [
                 {
