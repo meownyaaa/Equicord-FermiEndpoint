@@ -605,24 +605,23 @@ async function joinRandomVoice() {
         return;
     }
 
-    const { store } = settings;
     ChannelActions.selectVoiceChannel(channelId);
 
-    if (store.autoNavigate) {
+    if (settings.store.autoNavigate) {
         ChannelRouter.transitionToChannel(channelId);
     }
 
     const postJoinActions: PostJoinAction[] = [];
-    if (store.selfMute && !MediaEngineStore.isSelfMute()) {
+    if (settings.store.selfMute && !MediaEngineStore.isSelfMute()) {
         postJoinActions.push(() => VoiceActions.toggleSelfMute());
     }
-    if (store.selfDeafen && !MediaEngineStore.isSelfDeaf()) {
+    if (settings.store.selfDeafen && !MediaEngineStore.isSelfDeaf()) {
         postJoinActions.push(() => VoiceActions.toggleSelfDeaf());
     }
-    if (store.autoCamera) {
+    if (settings.store.autoCamera) {
         postJoinActions.push(enableCamera);
     }
-    if (store.autoStream) {
+    if (settings.store.autoStream) {
         postJoinActions.push(() => startChannelStream(channel));
     }
 
@@ -646,16 +645,15 @@ function RandomVoiceButton({ iconForeground, hideTooltips, nameplate }: UserArea
 
 function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
     const [, rerender] = React.useReducer(value => value + 1, 0);
-    const { store } = settings;
     const guilds = getRenderableGuilds();
     const allServerIds = guilds.map(guild => guild.id);
-    const selectedServerIds = getSelectedServerIds(store) ?? allServerIds;
+    const selectedServerIds = getSelectedServerIds(settings.store) ?? allServerIds;
 
-    const update = <K extends keyof typeof store>(key: K, value: typeof store[K]) => {
-        store[key] = value;
+    const update = <K extends keyof typeof settings.store>(key: K, value: typeof settings.store[K]) => {
+        settings.store[key] = value;
         rerender();
     };
-    const toggle = <K extends SelfSettingKey | StateFilterKey | "includeStates" | "avoidStates">(key: K) => update(key, !store[key]);
+    const toggle = <K extends SelfSettingKey | StateFilterKey | "includeStates" | "avoidStates">(key: K) => update(key, !settings.store[key]);
     const selectAllServers = () => {
         setServerIds(guilds.map(guild => guild.id));
         rerender();
@@ -675,7 +673,7 @@ function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
 
     const setSlider = <K extends "UserAmount" | "spacesLeft" | "vcLimit">(key: K) =>
         debounce((value: number) => {
-            store[key] = Math.round(value);
+            settings.store[key] = Math.round(value);
             rerender();
         }, 50);
 
@@ -717,7 +715,7 @@ function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
                             key={key}
                             id={`random-voice-filter-${key}`}
                             label={label}
-                            checked={store[key]}
+                            checked={settings.store[key]}
                             action={() => toggle(key)}
                         />
                     ))}
@@ -725,15 +723,15 @@ function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
                     <Menu.MenuCheckboxItem
                         id="random-voice-include-states"
                         label="Include Filters"
-                        checked={store.includeStates}
-                        disabled={store.avoidStates || !hasStateFilters(store)}
+                        checked={settings.store.includeStates}
+                        disabled={settings.store.avoidStates || !hasStateFilters(settings.store)}
                         action={() => toggle("includeStates")}
                     />
                     <Menu.MenuCheckboxItem
                         id="random-voice-avoid-states"
                         label="Avoid Filters"
-                        checked={store.avoidStates}
-                        disabled={store.includeStates || !hasStateFilters(store)}
+                        checked={settings.store.avoidStates}
+                        disabled={settings.store.includeStates || !hasStateFilters(settings.store)}
                         action={() => toggle("avoidStates")}
                     />
                 </>
@@ -746,8 +744,8 @@ function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
                 label: "User Amount",
                 sliderKey: "UserAmount",
                 operationKey: "UserAmountOperation",
-                sliderValue: store.UserAmount,
-                operationValue: store.UserAmountOperation,
+                sliderValue: settings.store.UserAmount,
+                operationValue: settings.store.UserAmountOperation,
                 onOperationChange: value => update("UserAmountOperation", value),
                 onSliderChange: setSlider("UserAmount"),
             })}
@@ -759,8 +757,8 @@ function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
                 label: "Spaces Left",
                 sliderKey: "spacesLeft",
                 operationKey: "spacesLeftOperation",
-                sliderValue: store.spacesLeft,
-                operationValue: store.spacesLeftOperation,
+                sliderValue: settings.store.spacesLeft,
+                operationValue: settings.store.spacesLeftOperation,
                 onOperationChange: value => update("spacesLeftOperation", value),
                 onSliderChange: setSlider("spacesLeft"),
             })}
@@ -772,8 +770,8 @@ function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
                 label: "Voice Limit",
                 sliderKey: "vcLimit",
                 operationKey: "vcLimitOperation",
-                sliderValue: store.vcLimit,
-                operationValue: store.vcLimitOperation,
+                sliderValue: settings.store.vcLimit,
+                operationValue: settings.store.vcLimitOperation,
                 onOperationChange: value => update("vcLimitOperation", value),
                 onSliderChange: setSlider("vcLimit"),
             })}
@@ -787,7 +785,7 @@ function RandomVoiceMenu({ onClose }: { onClose(): void; }) {
                             key={key}
                             id={`random-voice-setting-${key}`}
                             label={label}
-                            checked={store[key]}
+                            checked={settings.store[key]}
                             action={() => toggle(key)}
                         />
                     ))}
