@@ -16,7 +16,7 @@ import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures } from "@vencord/discord-types";
 import { extractAndLoadChunksLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
 import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, useState } from "@webpack/common";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 import { PREDEFINED_SERVERS } from "./servers";
 import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
@@ -31,7 +31,7 @@ interface GoLiveEngine {
     setGoLiveSource(source: { desktopDescription: { id: string; }; } | null, context: "stream"): void;
 }
 const GoLiveMediaEngineStore = findStoreLazy("MediaEngineStore") as { getMediaEngine(): GoLiveEngine; };
-import { getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
+import { captureConnectedBackend, getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 import { CustomVideoPlayer } from "./videoPlayer";
 
 const logger = new Logger("ChangeEndpoint");
@@ -70,6 +70,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSignature: string | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let pollingStarted = false;
+let pollRunning = false;
 let applyingGuildOrder = false;
 
 const POLL_INTERVAL = 45 * 1000;
@@ -153,6 +154,7 @@ function applyGuildOrder(folders: HarmonyGuildFolder[]) {
 }
 
 async function pollSavedGuildOrder() {
+    pollRunning = true;
     try {
         const res = await RestAPI.get({ url: "/users/@me/settings" });
         const folders: HarmonyGuildFolder[] = res?.body?.guild_folders ?? [];
@@ -165,6 +167,7 @@ async function pollSavedGuildOrder() {
     } catch (e) {
         logger.error("Failed to poll saved guild order", e);
     } finally {
+        pollRunning = false;
         if (pollingStarted) pollTimer = setTimeout(pollSavedGuildOrder, POLL_INTERVAL);
     }
 }
@@ -175,7 +178,7 @@ function startGuildOrderSync() {
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.subscribe(e, schedulePush));
     if (!settings.store.legacyGuildOrderSync || pollingStarted) return;
     pollingStarted = true;
-    pollSavedGuildOrder();
+    if (!pollRunning) pollSavedGuildOrder();
 }
 
 function stopGuildOrderSync() {
@@ -193,6 +196,7 @@ const DM_POLL_INTERVAL = 90 * 1000;
 
 let dmPollTimer: ReturnType<typeof setTimeout> | null = null;
 let dmPollingStarted = false;
+let dmPollRunning = false;
 
 async function checkChannelForMissedMessage(channel: { id: string; last_message_id: string | null; type: number; }) {
     if (channel.type !== DM_CHANNEL_TYPE && channel.type !== GROUP_DM_CHANNEL_TYPE) return;
@@ -229,6 +233,7 @@ async function checkChannelForMissedMessage(channel: { id: string; last_message_
 // gotta check that in the future, but its low priority
 
 async function pollDMUnreads() {
+    dmPollRunning = true;
     try {
         const res = await RestAPI.get({ url: "/users/@me/channels" });
         const channels: Array<{ id: string; last_message_id: string | null; type: number; }> = res?.body ?? [];
@@ -236,12 +241,13 @@ async function pollDMUnreads() {
     } catch (e) {
         logger.error("Failed to poll DM unreads", e);
     } finally {
+        dmPollRunning = false;
         if (dmPollingStarted) dmPollTimer = setTimeout(pollDMUnreads, DM_POLL_INTERVAL);
     }
 }
 
 function onDMPollConnectionOpen() {
-    if (dmPollTimer) return;
+    if (dmPollTimer || dmPollRunning) return;
     pollDMUnreads();
 }
 
@@ -381,27 +387,20 @@ function stopWebEngineGoLiveSource() {
     }
 }
 
-let originalStreamDispatch: typeof FluxDispatcher.dispatch | null = null;
-
-function installGoLiveDispatchHook() {
-    if (originalStreamDispatch) return;
-    const original = FluxDispatcher.dispatch.bind(FluxDispatcher);
-    originalStreamDispatch = original;
-    FluxDispatcher.dispatch = (payload: any) => {
-        if (payload?.type === "STREAM_START" && payload.sourceId != null) {
-            startWebEngineGoLiveSource(payload.sourceId, payload.sourceName);
-        } else if (payload?.type === "STREAM_STOP") {
-            stopWebEngineGoLiveSource();
-        }
-        return original(payload);
-    };
+function goLiveInterceptor(payload: { type: string; sourceId?: string; sourceName?: string; }) {
+    if (payload.type === "STREAM_START" && payload.sourceId != null) {
+        startWebEngineGoLiveSource(payload.sourceId, payload.sourceName);
+    } else if (payload.type === "STREAM_STOP") {
+        stopWebEngineGoLiveSource();
+    }
+    return false;
 }
 
-function uninstallGoLiveDispatchHook() {
-    if (!originalStreamDispatch) return;
-    FluxDispatcher.dispatch = originalStreamDispatch;
-    originalStreamDispatch = null;
+function removeInterceptor(interceptor: unknown) {
+    removeFromArray(FluxDispatcher._interceptors, i => i === interceptor);
 }
+
+let originalPermissionsQuery: Permissions["query"] | null = null;
 
 const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
 
@@ -431,21 +430,22 @@ function maxOutLoadedGuilds() {
     GuildStore.emitChange();
 }
 
+function boostPerkInterceptor(event: any) {
+    switch (event.type) {
+        case "GUILD_CREATE":
+        case "GUILD_UPDATE":
+            maxOutGuildPremium(event.guild);
+            break;
+        case "READY":
+            event.guilds?.forEach(maxOutGuildPremium);
+            break;
+    }
+    return false;
+}
+
 function installBoostPerkUnlocker() {
     maxOutLoadedGuilds();
-
-    FluxDispatcher.addInterceptor(event => {
-        switch (event.type) {
-            case "GUILD_CREATE":
-            case "GUILD_UPDATE":
-                maxOutGuildPremium(event.guild);
-                break;
-            case "READY":
-                event.guilds?.forEach(maxOutGuildPremium);
-                break;
-        }
-        return false;
-    });
+    FluxDispatcher.addInterceptor(boostPerkInterceptor);
 }
 
 function fixReactionEmoji(emoji: any) {
@@ -465,21 +465,9 @@ function sanitiseReactionPayload(payload: any) {
     }
 }
 
-let originalDispatch: typeof FluxDispatcher.dispatch | null = null;
-
-function installReactionEmojiFix() {
-    if (originalDispatch) return;
-    originalDispatch = FluxDispatcher.dispatch.bind(FluxDispatcher);
-    FluxDispatcher.dispatch = (payload: any) => {
-        if (getCdnHost() != null) sanitiseReactionPayload(payload);
-        return originalDispatch!(payload);
-    };
-}
-
-function uninstallReactionEmojiFix() {
-    if (!originalDispatch) return;
-    FluxDispatcher.dispatch = originalDispatch;
-    originalDispatch = null;
+function reactionEmojiInterceptor(payload: unknown) {
+    if (getCdnHost() != null) sanitiseReactionPayload(payload);
+    return false;
 }
 
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
@@ -639,8 +627,7 @@ function installXHRSanitiser() {
             installGuildProfileResponseExpander(this);
         }
 
-        // @ts-ignore - passthrough of open()'s variadic rest args
-        return OriginalOpen.call(this, method, url, ...rest);
+        return Reflect.apply(OriginalOpen, this, [method, url, ...rest]);
     };
 
     const OriginalSend = originalXHRSend = XMLHttpRequest.prototype.send;
@@ -670,9 +657,89 @@ function isAltInviteHostName(host?: string | null) {
     return host === ALT_INVITE_HOST || !!host?.endsWith(`.${ALT_INVITE_HOST}`);
 }
 
+interface ChannelWithIcon {
+    id: string;
+    icon?: string;
+}
+
+const channelIconComponents = new Map<string, ComponentType<{ className?: string; }>>();
+
+const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: ChannelWithIcon; }) {
+    const inputRef = useRef<HTMLInputElement>(null);
+    const [uploading, setUploading] = useState(false);
+
+    async function patchIcon(icon: string | null) {
+        setUploading(true);
+        try {
+            await RestAPI.patch({ url: `/channels/${channel.id}`, body: { icon } });
+            showToast(icon ? "channel icon updated" : "channel icon cleared", Toasts.Type.SUCCESS);
+        } catch (e) {
+            showToast("failed to update channel icon", Toasts.Type.FAILURE);
+        } finally {
+            setUploading(false);
+        }
+    }
+
+    async function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+
+        const reader = new FileReader();
+        const imageUri = await new Promise<string | null>(resolve => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(file);
+        });
+        if (!imageUri) return showToast("couldn't read that image", Toasts.Type.FAILURE);
+
+        await loadIconCropModalChunks();
+        openModalLazy(async () => props => (
+            <IconCropModal
+                uploadType="GUILD_ICON"
+                imageUri={imageUri}
+                file={file}
+                onCrop={(result: IconCropResult) => patchIcon(result.imageUri)}
+                {...props}
+            />
+        ));
+    }
+
+    return (
+        <SettingsFieldset label="Channel Icon">
+            <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div
+                        onClick={() => !uploading && inputRef.current?.click()}
+                        style={{
+                            width: 48, height: 48, borderRadius: "8px", overflow: "hidden",
+                            cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
+                            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                        }}
+                    >
+                        {channel.icon
+                            ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                            : <WebsiteIcon />}
+                    </div>
+                    <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
+                    <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
+                        Change Icon
+                    </Button>
+                    {channel.icon && (
+                        <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
+                            Remove
+                        </Button>
+                    )}
+                </div>
+                <Text variant="text-xs/normal" color="text-muted" style={{ marginTop: "8px" }}>Shown in the channel list in place of the default icon.</Text>
+            </div>
+        </SettingsFieldset>
+    );
+}, { noop: true });
+
 export default definePlugin({
     name: "ChangeEndpoint",
-    description: "Redirects Discord API/CDN/Gateway traffic to a Spacebar backend (Harmony by default, or a custom one).",
+    description: "Redirects Discord API, CDN and gateway traffic to a Spacebar backend.",
     authors: [],
     // to add author ids for both my harmony and spacebar accounts, forgot how its
     // formatted though, and im too lazy tbh
@@ -695,6 +762,10 @@ export default definePlugin({
 
     isAltInviteHost(url: { host?: string | null; }) {
         return isAltInviteHostName(url.host);
+    },
+
+    withHttps(endpoint: string) {
+        return /^\w+:\/\//.test(endpoint) ? endpoint : "https:" + endpoint;
     },
 
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
@@ -726,83 +797,19 @@ export default definePlugin({
     },
 
     renderChannelIcon(channel: { id: string; icon: string; }) {
-        return ErrorBoundary.wrap(function ({ className }: { className?: string; }) {
-            return <img className={className} src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" />;
-        }, { noop: true });
+        const key = `${channel.id}/${channel.icon}`;
+        let Icon = channelIconComponents.get(key);
+        if (!Icon) {
+            Icon = ErrorBoundary.wrap(({ className }: { className?: string; }) => (
+                <img className={className} src={`https://${getCdnHost()}/channel-icons/${key}.png`} alt="" />
+            ), { noop: true });
+            channelIconComponents.set(key, Icon);
+        }
+        return Icon;
     },
 
-    renderChannelIconEditor(channel: { id: string; icon?: string; }) {
-        const Comp = ErrorBoundary.wrap(function () {
-            const inputRef = useRef<HTMLInputElement>(null);
-            const [uploading, setUploading] = useState(false);
-
-            async function patchIcon(icon: string | null) {
-                setUploading(true);
-                try {
-                    await RestAPI.patch({ url: `/channels/${channel.id}`, body: { icon } });
-                    showToast(icon ? "channel icon updated" : "channel icon cleared", Toasts.Type.SUCCESS);
-                } catch (e) {
-                    showToast("failed to update channel icon", Toasts.Type.FAILURE);
-                } finally {
-                    setUploading(false);
-                }
-            }
-
-            async function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (!file) return;
-
-                const reader = new FileReader();
-                const imageUri = await new Promise<string>(resolve => {
-                    reader.onload = () => resolve(reader.result as string);
-                    reader.readAsDataURL(file);
-                });
-
-                await loadIconCropModalChunks();
-                openModalLazy(async () => props => (
-                    <IconCropModal
-                        uploadType="GUILD_ICON"
-                        imageUri={imageUri}
-                        file={file}
-                        onCrop={(result: IconCropResult) => patchIcon(result.imageUri)}
-                        {...props}
-                    />
-                ));
-            }
-
-            return (
-                <SettingsFieldset label="Channel Icon">
-                    <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                            <div
-                                onClick={() => !uploading && inputRef.current?.click()}
-                                style={{
-                                    width: 48, height: 48, borderRadius: "8px", overflow: "hidden",
-                                    cursor: uploading ? "default" : "pointer", background: "var(--background-secondary)",
-                                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
-                                }}
-                            >
-                                {channel.icon
-                                    ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                                    : <WebsiteIcon />}
-                            </div>
-                            <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
-                            <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
-                                Change Icon
-                            </Button>
-                            {channel.icon && (
-                                <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
-                                    Remove
-                                </Button>
-                            )}
-                        </div>
-                        <Text variant="text-xs/normal" color="text-muted" style={{ marginTop: "8px" }}>Shown in the channel list in place of the default icon.</Text>
-                    </div>
-                </SettingsFieldset>
-            );
-        }, { noop: true });
-        return <Comp key="channel-icon-editor" />;
+    renderChannelIconEditor(channel: ChannelWithIcon) {
+        return <ChannelIconEditor key="channel-icon-editor" channel={channel} />;
     },
 
     channelIconMemoEqual(a: any, b: any) {
@@ -900,7 +907,8 @@ export default definePlugin({
             if (!previousUserId || previousUserId === user.id) return;
 
             const mapped = settings.store.accountBackends[user.id];
-            if (mapped && mapped !== settings.store.backend) {
+            const exists = PREDEFINED_SERVERS.some(s => s.id === mapped) || settings.store.customServers.some(s => s.id === mapped);
+            if (mapped && exists && mapped !== settings.store.backend) {
                 settings.store.backend = mapped;
                 location.reload();
             }
@@ -938,6 +946,7 @@ export default definePlugin({
         migrateVideoPlayerSetting();
         migrateDefaultBackend();
         migrateCustomServers();
+        captureConnectedBackend();
         startGuildOrderSync();
         startDMUnreadPoll();
         installFetchSanitiser();
@@ -945,7 +954,7 @@ export default definePlugin({
         installBoostPerkUnlocker();
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
-        installReactionEmojiFix();
+        FluxDispatcher.addInterceptor(reactionEmojiInterceptor);
         installActivityUnfilter();
 
         SettingsPlugin.customEntries.push({
@@ -958,20 +967,21 @@ export default definePlugin({
         if (typeof DiscordNative === "undefined") return;
 
         Native.registerDisplayMediaHandler();
-        installGoLiveDispatchHook();
+        FluxDispatcher.addInterceptor(goLiveInterceptor);
 
-        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        const originalQuery = originalPermissionsQuery = navigator.permissions.query;
         navigator.permissions.query = (descriptor: PermissionDescriptor) => {
             if (descriptor.name === "camera" || descriptor.name === "microphone") {
                 return Promise.resolve({
+                    name: descriptor.name,
                     state: "granted",
                     onchange: null,
                     addEventListener() {},
                     removeEventListener() {},
                     dispatchEvent() { return true; }
-                } as unknown as PermissionStatus);
+                } satisfies PermissionStatus);
             }
-            return originalQuery(descriptor);
+            return originalQuery.call(navigator.permissions, descriptor);
         };
     },
 
@@ -982,10 +992,17 @@ export default definePlugin({
         uninstallXHRSanitiser();
         uninstallGatewaySendSanitiser();
         uninstallDaveClientConnectGuard();
-        uninstallReactionEmojiFix();
+        removeInterceptor(boostPerkInterceptor);
+        removeInterceptor(reactionEmojiInterceptor);
+        removeInterceptor(goLiveInterceptor);
         uninstallActivityUnfilter();
-        uninstallGoLiveDispatchHook();
         removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
+
+        if (originalPermissionsQuery) {
+            navigator.permissions.query = originalPermissionsQuery;
+            originalPermissionsQuery = null;
+            Native.unregisterDisplayMediaHandler();
+        }
     },
 
     patches: [
@@ -1106,8 +1123,8 @@ export default definePlugin({
         {
             find: "return\"https:\"+window.GLOBAL_ENV.API_ENDPOINT+(",
             replacement: {
-                match: /function (\i)\(\)\{let (\i)=!\(arguments\.length>0\)\|\|void 0===arguments\[0\]\|\|arguments\[0\];return"https:"\+window\.GLOBAL_ENV\.API_ENDPOINT\+\(\2\?`\/v\$\{window\.GLOBAL_ENV\.API_VERSION\}`:""\)\}/,
-                replace: 'function $1(){let e=window.GLOBAL_ENV.API_ENDPOINT;return(/^\\w+:\\/\\//.test(e)?e:"https:"+e)+`/v${window.GLOBAL_ENV.API_VERSION}`}'
+                match: /"https:"\+window\.GLOBAL_ENV\.API_ENDPOINT(?=\+\()/,
+                replace: "($self.withHttps(window.GLOBAL_ENV.API_ENDPOINT))"
             }
         },
         {
@@ -1200,9 +1217,9 @@ export default definePlugin({
             }
         },
         {
-            find: "getPremiumTypeOverride(){return o.premiumTypeOverride}",
+            find: /getPremiumTypeOverride\(\)\{return \i\.premiumTypeOverride\}/,
             replacement: {
-                match: /getPremiumTypeOverride\(\)\{return o\.premiumTypeOverride\}/,
+                match: /getPremiumTypeOverride\(\)\{return \i\.premiumTypeOverride\}/,
                 replace: "getPremiumTypeOverride(){return 2}"
                 // nitro trickery, not sure if fully functional
             }
@@ -1233,18 +1250,18 @@ export default definePlugin({
             }
         },
         {
-            find: "c.preferred_region=",
+            find: /\.preferred_region=\i,\i\.preferred_regions=/,
             replacement: {
-                match: /\(c\.preferred_region=(\w+),c\.preferred_regions=\w+\)/,
-                replace: "(c.preferred_region=$1)" // for vc connecting, crucial patch for that but client will work without it
+                match: /\((\i)\.preferred_region=(\i),\1\.preferred_regions=\i\)/,
+                replace: "($1.preferred_region=$2)" // for vc connecting, crucial patch for that but client will work without it
             }
         },
         {
-            find: "maxWidth:i,maxHeight:r",
+            find: /let\{width:\i,height:\i,maxWidth:\i,maxHeight:\i/,
             all: true,
             replacement: {
-                match: /\{width:t,height:n,maxWidth:i,maxHeight:r(?:,minWidth:a=0,minHeight:s=0)?\}=e[^;]*;/g,
-                replace: (match: string) => `${match}null==t&&(t=i,n=r);`
+                match: /let\{width:(\i),height:(\i),maxWidth:(\i),maxHeight:(\i)(?:,minWidth:\i=0,minHeight:\i=0)?\}=\i[^;]{0,100};/g,
+                replace: "$&null==$1&&($1=$3,$2=$4);"
             }
         },
         {
@@ -1262,10 +1279,10 @@ export default definePlugin({
             }
         },
         {
-            find: "let{width:t,height:n}=e;return t>0&&n>0",
+            find: /let\{width:\i,height:\i\}=\i;return \i>0&&\i>0/,
             replacement: {
-                match: /let\{width:t,height:n\}=e;return t>0&&n>0/,
-                replace: "let{width:t,height:n}=e;return(t??1)>0&&(n??1)>0"
+                match: /(let\{width:(\i),height:(\i)\}=\i;return )\2>0&&\3>0/,
+                replace: "$1($2??1)>0&&($3??1)>0"
             }
         },
         {
@@ -1292,12 +1309,12 @@ export default definePlugin({
             }
         },*/
         {
-            find: "originalItem:e,type:(0,",
+            find: /originalItem:\i,type:\(0,/,
             all: true,
             replacement: {
-                match: /type:\(0,(\w+\.\w+)\)\(([\w,]+)\)/,
-                replace: (match: string, fn: string, args: string) =>
-                    `type:(()=>{let r=(0,${fn})(${args});return"OTHER"===r&&null!=e.content_type?(e.content_type.startsWith("video/")?"VIDEO":e.content_type.startsWith("image/")?"IMAGE":e.content_type.startsWith("audio/")?"AUDIO":r):r})()`
+                match: /originalItem:(\i),type:\(0,(\i\.\i)\)\(([\w$,]+)\)/,
+                replace: (_: string, item: string, fn: string, args: string) =>
+                    `originalItem:${item},type:(()=>{let vcType=(0,${fn})(${args});return"OTHER"===vcType&&null!=${item}.content_type?(${item}.content_type.startsWith("video/")?"VIDEO":${item}.content_type.startsWith("image/")?"IMAGE":${item}.content_type.startsWith("audio/")?"AUDIO":vcType):vcType})()`
             }
         },
         {
@@ -1310,9 +1327,8 @@ export default definePlugin({
         {
             find: 'case"VIDEO":case"CLIP":return(0,',
             replacement: {
-                match: /case"VIDEO":case"CLIP":return\(0,(?:\w+\.\w+)\)\(\w+,\{item:(\w+),[^}]*\}\)/,
-                replace: (match: string, item: string) =>
-                    `case"VIDEO":case"CLIP":return $self.renderSpoilerVideo(${item},_||640,D||400)`
+                match: /case"VIDEO":case"CLIP":return\(0,\i\.\i\)\(\i,\{item:(\i),[^}]{0,400}?maxWidth:(\i),maxHeight:(\i)[^}]{0,300}\}\)/,
+                replace: 'case"VIDEO":case"CLIP":return $self.renderSpoilerVideo($1,$2||640,$3||400)'
             }
         },
         {
@@ -1476,6 +1492,35 @@ export default definePlugin({
             replacement: {
                 match: /_maybeRefuseDaveDowngrade\((\i),(\i),(\i)\)\{/,
                 replace: "_maybeRefuseDaveDowngrade($1,$2,$3){return!1;"
+            }
+        },
+        {
+            // never load libdave or advertise dave support, so voice identifies with
+            // max_dave_protocol_version 0 and connections skip the e2ee frame transforms
+            find: "startDavePreload(){",
+            predicate: () => getApiEndpoint() != null,
+            replacement: [
+                {
+                    match: /fetchDave:\(0,\i\.isWeb\)\(\)/,
+                    replace: "fetchDave:!1"
+                },
+                {
+                    match: /startDavePreload\(\)\{/,
+                    replace: "$&return;"
+                },
+                {
+                    match: /(getSupportedSecureFramesProtocolVersion\(\)\{)return \i\.getSupportedSecureFramesProtocolVersion\(\)\}/,
+                    replace: "$1return 0}"
+                }
+            ]
+        },
+        {
+            // this nag fires whenever the engine isn't on dave v1, which is always with dave off
+            find: "E2EE_UPDATE_REQUIRED]:{predicate:",
+            predicate: () => getApiEndpoint() != null,
+            replacement: {
+                match: /E2EE_UPDATE_REQUIRED\]:\{predicate:\(\)=>\{/,
+                replace: "$&return!1;"
             }
         },
     ]

@@ -95,6 +95,11 @@ const buildConfigs = [
             ...commonOptions.define,
             IS_EXTENSION: "true"
         },
+        // a second enabled copy of the extension would otherwise run alongside the first and
+        // overwrite localStorage settings with its own stale snapshot, so only the first copy starts
+        banner: {
+            js: "if(window.__equicordLoaded){window.__equicordDuplicates=(window.__equicordDuplicates??0)+1;throw Error(\"Another copy of Equicord is already running in this tab, so this one won't start\")}window.__equicordLoaded=!0;"
+        },
         footer: { js: "//# sourceURL=file:///VencordWeb" }
     },
     {

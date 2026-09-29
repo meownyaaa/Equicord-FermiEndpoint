@@ -7,16 +7,17 @@
 import "./styles.css";
 
 import { Card } from "@components/Card";
-import { DoubleCheckmarkIcon, PencilIcon, PlusIcon, TrashIcon, WebsiteIcon } from "@components/Icons";
 import { HeadingPrimary, HeadingTertiary } from "@components/Heading";
+import { DoubleCheckmarkIcon, PencilIcon, PlusIcon, TrashIcon, WebsiteIcon } from "@components/Icons";
 import { Paragraph } from "@components/Paragraph";
 import { SettingsTab, wrapTab } from "@components/settings";
-import { PREDEFINED_SERVERS, type CustomServer } from "@equicordplugins/ChangeEndpoint/servers";
+import { type CustomServer,PREDEFINED_SERVERS } from "@equicordplugins/ChangeEndpoint/servers";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
 import { Alerts, Button, React, TextInput, UserStore, useState } from "@webpack/common";
 
 import { settings } from "../settings";
+import { connectedBackend } from "../utils";
 
 const SETTING_KEYS = ["backend", "customServers", "accountBackends"] as Array<"backend" | "customServers" | "accountBackends">;
 
@@ -48,12 +49,12 @@ function activeServerLabel(): { name: string; host: string; } {
     if (predefined) return { name: predefined.name, host: predefined.host };
 
     const custom = customServers.find(s => s.id === backend);
-    if (custom) return { name: custom.name, host: custom.host || custom.apiEndpoint || "not set" };
+    if (custom) return { name: custom.name, host: (custom.type === "simple" ? custom.host : custom.apiEndpoint) || "not set" };
 
     return { name: "None", host: "not set" };
 }
 
-function CustomServerForm({ existing, onDone, onSaved }: { existing?: CustomServer; onDone(): void; onSaved?(): void; }) {
+function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDone(): void; }) {
     const [name, setName] = useState(existing?.name ?? "");
     const [type, setType] = useState<"simple" | "advanced">(existing?.type ?? "simple");
     const [host, setHost] = useState(existing?.host ?? "");
@@ -84,7 +85,6 @@ function CustomServerForm({ existing, onDone, onSaved }: { existing?: CustomServ
             ? settings.plain.customServers.map(s => (s.id === existing.id ? entry : s))
             : [...settings.plain.customServers, entry];
 
-        onSaved?.();
         onDone();
 
         if (wasActive || !existing) {
@@ -177,17 +177,15 @@ function EndpointTab() {
     settings.use(SETTING_KEYS);
     const [addingCustom, setAddingCustom] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
-    const [refreshKey, setRefreshKey] = useState(0);
-    const forceRefresh = () => setRefreshKey(k => k + 1);
 
     const { backend, customServers } = settings.store;
     const active = activeServerLabel();
+    const restartPending = backend !== connectedBackend;
     const editingServer = editingId ? customServers.find(s => s.id === editingId) : undefined;
 
     const selectServer = (id: string) => {
         if (settings.store.backend === id) return;
         settings.store.backend = id;
-        forceRefresh();
         confirmRestart();
     };
 
@@ -200,28 +198,27 @@ function EndpointTab() {
             cancelText: "Cancel",
             onConfirm: () => {
                 settings.store.customServers = settings.plain.customServers.filter(s => s.id !== id);
+                settings.store.accountBackends = Object.fromEntries(Object.entries(settings.plain.accountBackends).filter(([, linked]) => linked !== id));
                 if (settings.store.backend === id) {
                     settings.store.backend = PREDEFINED_SERVERS[0].id;
                     confirmRestart();
                 }
-                forceRefresh();
             }
         });
     };
 
     return (
-        <div className="vc-endpoint-tab" key={refreshKey}>
+        <div className="vc-endpoint-tab">
             <Card className="vc-endpoint-status-card">
                 <div className="vc-endpoint-status-left">
                     <WebsiteIcon height={20} width={20} />
                     <div>
-                        <Paragraph weight="bold">Connected to {active.name}</Paragraph>
+                        <Paragraph weight="bold">{restartPending ? `Restart to connect to ${active.name}` : `Connected to ${active.name}`}</Paragraph>
                         <Paragraph size="sm" className="vc-endpoint-muted">{active.host}</Paragraph>
                     </div>
                 </div>
                 <div className="vc-endpoint-status-right">
-                    <DoubleCheckmarkIcon height={16} width={16} />
-                    Connected
+                    {restartPending ? "Restart needed" : <><DoubleCheckmarkIcon height={16} width={16} />Connected</>}
                 </div>
             </Card>
 
@@ -251,7 +248,7 @@ function EndpointTab() {
                     >
                         <div>
                             <Paragraph weight="bold">{server.name}</Paragraph>
-                            <Paragraph size="sm" className="vc-endpoint-muted">{server.host || server.apiEndpoint}</Paragraph>
+                            <Paragraph size="sm" className="vc-endpoint-muted">{server.type === "simple" ? server.host : server.apiEndpoint}</Paragraph>
                         </div>
                         <div className="vc-endpoint-server-card-actions">
                             {backend === server.id && <DoubleCheckmarkIcon height={16} width={16} />}
@@ -275,9 +272,9 @@ function EndpointTab() {
             </div>
 
             {editingServer ? (
-                <CustomServerForm existing={editingServer} onDone={() => setEditingId(null)} onSaved={forceRefresh} />
+                <CustomServerForm existing={editingServer} onDone={() => setEditingId(null)} />
             ) : addingCustom ? (
-                <CustomServerForm onDone={() => setAddingCustom(false)} onSaved={forceRefresh} />
+                <CustomServerForm onDone={() => setAddingCustom(false)} />
             ) : (
                 <div className={classes(Margins.top8, "vc-endpoint-form-actions")}>
                     <Button size={Button.Sizes.SMALL} look={Button.Looks.FILLED} color={Button.Colors.TRANSPARENT} onClick={() => setAddingCustom(true)}>

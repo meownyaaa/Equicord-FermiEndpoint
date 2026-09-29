@@ -50,5 +50,13 @@ export const getCdnHost = () =>
 export const getGatewayEndpoint = () =>
     resolveEndpoint("gatewayEndpoint", host => `wss://gateway.${host}`);
 
-export const getMediaProxyEndpoint = () =>
-    resolveEndpoint("mediaProxyEndpoint", host => `//cdn.${host}`);
+export const getMediaProxyEndpoint = () => {
+    const endpoint = resolveEndpoint("mediaProxyEndpoint", host => `cdn.${host}`);
+    return endpoint && `//${endpoint}`;
+};
+
+export let connectedBackend: string | null = null;
+
+export function captureConnectedBackend() {
+    connectedBackend = settings.store.backend;
+}

@@ -84,10 +84,6 @@ function clearCachedLoginData() {
         }
         window.sessionStorage?.clear();
 
-        window.indexedDB?.databases?.()
-            .then(dbs => dbs.forEach(db => db.name && !isOurs(db.name) && indexedDB.deleteDatabase(db.name)))
-            .catch(e => logger.error("Failed to enumerate IndexedDB databases", e));
-
         for (const cookie of document.cookie.split(";")) {
             const name = cookie.split("=")[0]?.trim();
             if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
@@ -113,7 +109,7 @@ const ClearCacheButton = () => (
         color={Button.Colors.RED}
         onClick={() => Alerts.show({
             title: "Clear cached login data?",
-            body: "This clears Discord's localStorage, sessionStorage, and IndexedDB for this client. " +
+            body: "This clears Discord's localStorage, sessionStorage and cookies for this client. " +
                 "Your Equicord settings and plugin data are kept. " +
                 "You'll need to fully quit Discord, or back out of here afterwards and hit Restart at the " +
                 "top of the plugins page.",
@@ -149,7 +145,7 @@ export const settings = definePluginSettings({
     accountBackends: {
         type: OptionType.CUSTOM,
         description: "Per-account backend map. Keys are Discord user IDs, values are backend ids " +
-            "(a PREDEFINED_SERVERS id, or \"custom-simple\"/\"custom-advanced\"). When set, switching to " +
+            "(a PREDEFINED_SERVERS id or a customServers id). When set, switching to " +
             "that account via Discord's own account switcher also switches the backend, followed by a reload.",
         default: {} as Record<string, string>
     },

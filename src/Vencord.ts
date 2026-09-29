@@ -206,6 +206,10 @@ async function init() {
     syncSettings();
     initTrayIpc();
 
+    if (IS_EXTENSION && window.__equicordDuplicates) {
+        showNotice("Another copy of the Equicord extension is enabled and can overwrite your settings. Remove the extra one from your browser's extensions page.", "OK", popNotice);
+    }
+
     if (!IS_DEV && !IS_WEB && !IS_UPDATER_DISABLED) {
         runUpdateCheck();
 

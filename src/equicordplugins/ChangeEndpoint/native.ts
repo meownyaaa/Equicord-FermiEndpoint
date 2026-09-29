@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { desktopCapturer, IpcMainInvokeEvent, session } from "electron";
+import { app, desktopCapturer, IpcMainInvokeEvent, session } from "electron";
+
+// spacebar voice servers listen on udp 6000, which chromium treats as an unsafe (x11) port and
+// silently refuses to send webrtc traffic to. this runs before app ready, so the switch still applies
+const allowedPorts = new Set(app.commandLine.getSwitchValue("explicitly-allowed-ports").split(",").filter(Boolean));
+allowedPorts.add("6000");
+app.commandLine.appendSwitch("explicitly-allowed-ports", [...allowedPorts].join(","));
 
 let handlerRegistered = false;
 let pendingSourceName: string | null = null;
@@ -18,9 +24,17 @@ export function registerDisplayMediaHandler(_event: IpcMainInvokeEvent) {
     handlerRegistered = true;
 
     session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
-        desktopCapturer.getSources({ types: ["window", "screen"] }).then(sources => {
-            const match = pendingSourceName != null ? sources.find(s => s.name === pendingSourceName) : undefined;
-            callback({ video: match ?? sources[0] });
-        });
+        desktopCapturer.getSources({ types: ["window", "screen"] })
+            .then(sources => {
+                const video = sources.find(s => s.name === pendingSourceName) ?? sources[0];
+                callback(video ? { video } : {});
+            })
+            .catch(() => callback({}));
     });
+}
+
+export function unregisterDisplayMediaHandler(_event: IpcMainInvokeEvent) {
+    if (!handlerRegistered) return;
+    handlerRegistered = false;
+    session.defaultSession.setDisplayMediaRequestHandler(null);
 }
