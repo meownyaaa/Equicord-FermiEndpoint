@@ -18,6 +18,7 @@ import { extractAndLoadChunksLazy, findByPropsLazy, findComponentByCodeLazy, fin
 import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, useState } from "@webpack/common";
 import type { ComponentType, ReactNode } from "react";
 
+import { guildifyAst } from "./guildTerminology";
 import { PREDEFINED_SERVERS } from "./servers";
 import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
 import { DiscordSpoiler } from "./spoiler";
@@ -768,6 +769,8 @@ export default definePlugin({
         return /^\w+:\/\//.test(endpoint) ? endpoint : "https:" + endpoint;
     },
 
+    guildifyAst,
+
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
         const withScheme = (url: string) => url.startsWith("//") ? `https:${url}` : url;
 
@@ -1161,6 +1164,16 @@ export default definePlugin({
             replacement: {
                 match: /window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT/g,
                 replace: () => JSON.stringify(getMediaProxyEndpoint())
+            }
+        },
+        {
+            // every intl message discord renders is built through this constructor, so rewriting
+            // its ast here covers all ui text without touching user content like guild names
+            find: "reserialize(){if(\"string\"==typeof this.ast)",
+            predicate: () => settings.store.guildTerminology,
+            replacement: {
+                match: /(?<=this\.ast=)\(0,\i\.isCompressedAst\)\(\i\)\?\i:\(0,\i\.compressFormatJsToAst\)\(\i\)/,
+                replace: "$self.guildifyAst($&,this.locale)"
             }
         },
         {

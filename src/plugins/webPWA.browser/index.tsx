@@ -191,10 +191,12 @@ export default definePlugin({
             const hasUnread = GuildReadStateStore.hasAnyUnread();
             const disableUnreadBadge = NotificationSettingsStore.getDisableUnreadBadge();
 
-            let totalCount = mentionCount + pendingRequests;
-            if (!totalCount && hasUnread && !disableUnreadBadge) totalCount = -1;
+            const totalCount = mentionCount + pendingRequests;
 
-            navigator.setAppBadge(totalCount);
+            // vesktop uses -1 for the unread dot, but the web badging api only takes counts >= 0
+            // and shows a plain dot when called without one
+            if (!totalCount && hasUnread && !disableUnreadBadge) navigator.setAppBadge();
+            else navigator.setAppBadge(totalCount);
         } catch (e) {
             console.error(e);
         }

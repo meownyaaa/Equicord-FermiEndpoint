@@ -157,6 +157,12 @@ export const settings = definePluginSettings({
         default: false,
         restartNeeded: true
     },
+    guildTerminology: {
+        type: OptionType.BOOLEAN,
+        description: "Call servers guilds throughout Discord's interface, the way Spacebar (and Fosscord before it) does.",
+        default: true,
+        restartNeeded: true
+    },
     legacyGuildOrderSync: {
         type: OptionType.BOOLEAN,
         description: "Reposition guilds to match the order saved on the deprecated /users/@me/settings endpoint " +
