@@ -1450,21 +1450,23 @@ export default definePlugin({
             }
         },
         {
-            // plain "window.GLOBAL_ENV.INVITE_HOST" also matches an unrelated env
-            // validation module - anchor on the K() call to hit the right one
-            find: "K(window.GLOBAL_ENV.INVITE_HOST)",
-            // discord only checks its own INVITE_HOST for invite links (see ALT_INVITE_HOST
-            // above) - both spots that check the invite host get an alternate-host fallback
-            replacement: [
-                {
-                    match: /let \i=z\(\i,(\i)\)/,
-                    replace: "$&??$self.getAltInviteRemainingPath($1)"
-                },
-                {
-                    match: /if\(\$\((\i),(\i)\)\)return!0/,
-                    replace: "if($($1,$2)||$self.isAltInviteHost($2))return!0"
-                }
-            ]
+            // the invite-host-remaining-path extractor (also handles the template/primary
+            // hosts the same way) - inviteHostRemainingPath/templateHostRemainingPath/
+            // primaryHostRemainingPath are real property keys, stable across discord's own renames
+            find: "inviteHostRemainingPath:null,templateHostRemainingPath:null,primaryHostRemainingPath:null",
+            replacement: {
+                match: /inviteHostRemainingPath:null,templateHostRemainingPath:null,primaryHostRemainingPath:null\};let \i=\i\(\i,(\i)\)/,
+                replace: "$&??$self.getAltInviteRemainingPath($1)"
+            }
+        },
+        {
+            // discord only checks its own INVITE_HOST (plus gift code/template hosts) for
+            // "is this a trusted domain" - add the alt host as another early-return case
+            find: "GLOBAL_ENV.GIFT_CODE_HOST:case window.GLOBAL_ENV.GUILD_TEMPLATE_HOST:case",
+            replacement: {
+                match: /switch\((\i)\)\{case \i\.GLOBAL_ENV\.INVITE_HOST:/,
+                replace: "if($self.isAltInviteHost({host:$1}))return!0;$&"
+            }
         },
         {
             find: "_maybeRefuseDaveDowngrade(",
