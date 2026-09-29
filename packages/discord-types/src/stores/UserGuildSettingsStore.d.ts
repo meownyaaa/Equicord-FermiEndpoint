@@ -69,7 +69,7 @@ export class UserGuildSettingsStore extends FluxStore {
     getPendingChannelUpdates(guildId: string): Record<string, any>;
     getState(): UserGuildSettingsState;
     isCategoryMuted(guildId: string, channelId: string): boolean;
-    isChannelMuted(guildId: string, channelId: string): boolean;
+    isChannelMuted(guildId: string | null, channelId: string): boolean;
     isChannelOptedIn(guildId: string, channelId: string, usePending?: boolean): boolean;
     isChannelOrParentOptedIn(guildId: string, channelId: string, usePending?: boolean): boolean;
     isChannelRecordOrParentOptedIn(channel: Channel, usePending?: boolean): boolean;
