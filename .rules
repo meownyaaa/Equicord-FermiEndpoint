@@ -9,6 +9,7 @@
 - No comments unless asked. Keep existing ones, they carry context.
 - Delete dead code. Don't comment out.
 - Natural human text in errors, descriptions, toasts. No dashes, no robotic phrasing. Descriptions start capitalized, end with period.
+- Do not co-author in commits, match the previous commit name styling for the files you're editing and don't add a body/description.
 - One-file plugin default. Split only past ~250 lines or when second file is genuinely reusable (`utils.ts`, `settings.ts`, `components/`).
 - No abstraction for 1-2 call sites. Inline beats single-use hook. `createX` used once is just a function call.
 - Don't reimplement what `@webpack/common` or `@utils/*` exports. Search first.
@@ -32,7 +33,7 @@
 
 ## Plugin Policy
 
-Does NOT get merged:
+Does NOT get merged (this repo, Equicord-FermiEndpoint, doesn't count):
 
 - Selfbots, automation of user actions, client state spoofing, API abuse.
 - Plugins requiring user-supplied API keys or untrusted third-party endpoints.
