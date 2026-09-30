@@ -120,3 +120,18 @@
     gap: 8px;
     z-index: 10;
 }
+
+.vc-endpoint-account-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.vc-endpoint-account-name {
+    flex: 1;
+    min-width: 0;
+}
+
+.vc-endpoint-linked-backend {
+    text-align: start;
+}

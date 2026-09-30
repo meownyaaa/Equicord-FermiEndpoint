@@ -88,7 +88,12 @@ export interface ContextMenuApi {
     openContextMenu(
         event: UIEvent,
         render?: Menu["Menu"],
-        options?: { enableSpellCheck?: boolean; },
+        options?: {
+            enableSpellCheck?: boolean;
+            position?: "top" | "bottom" | "left" | "right";
+            align?: "top" | "bottom" | "left" | "right" | "center";
+            disableClickTrap?: boolean;
+        },
         renderLazy?: () => Promise<Menu["Menu"]>
     ): void;
     openContextMenuLazy(

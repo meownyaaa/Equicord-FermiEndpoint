@@ -13,9 +13,9 @@ import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import { openModalLazy } from "@utils/modal";
 import definePlugin, { PluginNative } from "@utils/types";
-import type { GuildFeatures } from "@vencord/discord-types";
-import { extractAndLoadChunksLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, useState } from "@webpack/common";
+import type { GuildFeatures, User } from "@vencord/discord-types";
+import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
+import { AuthenticationStore, Avatar, Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, useState } from "@webpack/common";
 import type { ComponentType, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -26,13 +26,28 @@ import { DiscordSpoiler } from "./spoiler";
 const AuthActions = findLazy(m => typeof m?.A?.logoutInternal === "function" && m.A.logoutInternal.name === "logoutInternal" && typeof m.A.login === "function");
 const Native = VencordNative.pluginHelpers.ChangeEndpoint as PluginNative<typeof import("./native")>;
 
+interface MultiAccountUser {
+    id: string;
+    username: string;
+    avatar: string | null;
+    discriminator: string;
+    tokenStatus: number;
+}
+
+const MultiAccountStore: { getUsers(): MultiAccountUser[]; } = findStoreLazy("MultiAccountStore");
+const TokenStorage: { getToken(userId: string): string | null | undefined; setToken(token: string, userId: string): void; } = findByPropsLazy("getToken", "setToken", "hideToken");
+const switchToAccount: (userId: string) => Promise<unknown> = findByCodeLazy("MULTI_ACCOUNT_SWITCH_START");
+const UserRecord: typeof User = findLazy(m => m?.prototype?.getAvatarURL);
+const CircleCheckIcon = findComponentByCodeLazy("M12 23a11 11 0 1 0 0-22 11 11 0 0 0 0 22Zm5.7-13.3");
+const CircleWarningIcon = findComponentByCodeLazy("M12 23a11 11 0 1 0 0-22 11 11 0 0 0 0 22Zm1.44-15.94");
+
 interface GoLiveEngine {
     getDesktopSource(quality: { width: number; height: number; }, wantsAudio: boolean): Promise<string>;
     // null clears the current desktop source for that context
     setGoLiveSource(source: { desktopDescription: { id: string; }; } | null, context: "stream"): void;
 }
 const GoLiveMediaEngineStore = findStoreLazy("MediaEngineStore") as { getMediaEngine(): GoLiveEngine; };
-import { captureConnectedBackend, getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
+import { captureConnectedBackend, connectedBackend, getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
 import { CustomVideoPlayer } from "./videoPlayer";
 
 const logger = new Logger("ChangeEndpoint");
@@ -738,6 +753,57 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
     );
 }, { noop: true });
 
+function getLinkedBackend(userId: string) {
+    const backend = settings.store.accountBackends[userId];
+    const exists = PREDEFINED_SERVERS.some(s => s.id === backend) || settings.store.customServers.some(s => s.id === backend);
+    return exists && backend !== connectedBackend ? backend : null;
+}
+
+function openSwitchAccountLanding() {
+    AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
+    NavigationRouter.transitionTo("/login");
+}
+
+const GATEWAY_AUTH_FAILURE = /invalid token|user not found|user disabled|failed to decode token|unsupported token algorithm/i;
+
+function AccountSwitcherMenu({ onClose }: { onClose(): void; }) {
+    const currentId = AuthenticationStore.getId();
+
+    return (
+        <Menu.Menu navId="vc-endpoint-switch-account" onClose={onClose}>
+            {MultiAccountStore.getUsers().map(account => {
+                const user = new UserRecord(account);
+                const invalid = account.tokenStatus === 0 && !getLinkedBackend(account.id);
+
+                return (
+                    <Menu.MenuItem
+                        key={account.id}
+                        id={account.id}
+                        label={
+                            <div className="vc-endpoint-account-row">
+                                <Avatar src={user.getAvatarURL(undefined, 40)} size="SIZE_24" aria-label={account.username} />
+                                <div className="vc-endpoint-account-name">
+                                    <Text variant="text-sm/normal">{account.username}</Text>
+                                    {!user.hasUniqueUsername() && <Text variant="text-sm/normal">#{account.discriminator}</Text>}
+                                </div>
+                                {account.id === currentId && <CircleCheckIcon size="sm" color="var(--brand-500)" secondaryColor="var(--white-500)" />}
+                                {invalid && <CircleWarningIcon size="xs" color="var(--red-400)" secondaryColor="var(--white-500)" />}
+                            </div>
+                        }
+                        action={() => {
+                            if (account.id === currentId) return;
+                            if (invalid) openSwitchAccountLanding();
+                            else switchToAccount(account.id);
+                        }}
+                    />
+                );
+            })}
+            <Menu.MenuSeparator />
+            <Menu.MenuItem id="manage-accounts" label="Manage Accounts" action={openSwitchAccountLanding} />
+        </Menu.Menu>
+    );
+}
+
 export default definePlugin({
     name: "ChangeEndpoint",
     description: "Redirects Discord API, CDN and gateway traffic to a Spacebar backend.",
@@ -850,8 +916,47 @@ export default definePlugin({
         ));
     },
 
-    switchAccount() {
-        AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
+    onSwitchAccountClick(e: React.MouseEvent<HTMLButtonElement>) {
+        if (e.detail > 1) {
+            ContextMenuApi.closeContextMenu();
+            openSwitchAccountLanding();
+            return;
+        }
+
+        const { left, top } = e.currentTarget.getBoundingClientRect();
+        const anchor: React.MouseEvent<HTMLButtonElement> = { ...e, pageX: left, pageY: top - 8, stopPropagation: () => e.stopPropagation(), preventDefault: () => e.preventDefault() };
+        ContextMenuApi.openContextMenu(
+            anchor,
+            () => <AccountSwitcherMenu onClose={ContextMenuApi.closeContextMenu} />,
+            { position: "top", align: "left", disableClickTrap: true }
+        );
+    },
+
+    onGatewayClose(code: number, reason?: string) {
+        if (code !== 4000 || !GATEWAY_AUTH_FAILURE.test(reason ?? "")) return;
+        logger.warn(`Gateway rejected the token (${reason}), opening the account picker`);
+        setTimeout(openSwitchAccountLanding);
+    },
+
+    renderLinkedBackend(userId: string) {
+        const backend = settings.store.accountBackends[userId];
+        const name = PREDEFINED_SERVERS.find(s => s.id === backend)?.name ?? settings.store.customServers.find(s => s.id === backend)?.name;
+        return name ? <Text className="vc-endpoint-linked-backend" variant="text-sm/normal" color="text-muted">{name}</Text> : null;
+    },
+
+    isLinkedElsewhere(userId: string) {
+        return getLinkedBackend(userId) != null;
+    },
+
+    switchAccountBackend(userId: string) {
+        const backend = getLinkedBackend(userId);
+        const token = backend && TokenStorage.getToken(userId);
+        if (!backend || !token) return false;
+
+        TokenStorage.setToken(token, userId);
+        settings.store.backend = backend;
+        location.reload();
+        return true;
     },
 
     // for the login page, gotta add it to the actual account switcher and not just
@@ -892,7 +997,7 @@ export default definePlugin({
                     size={Button.Sizes.SMALL}
                     look={Button.Looks.OUTLINED}
                     color={Button.Colors.PRIMARY}
-                    onClick={() => this.switchAccount()}
+                    onClick={e => this.onSwitchAccountClick(e)}
                 >
                     Switch Account
                 </Button>
@@ -901,22 +1006,6 @@ export default definePlugin({
     },
 
     flux: {
-        CONNECTION_OPEN({ user }: { user?: { id: string; }; }) {
-            if (!user?.id) return;
-
-            const previousUserId = settings.store.lastSeenUserId;
-            settings.store.lastSeenUserId = user.id;
-
-            if (!previousUserId || previousUserId === user.id) return;
-
-            const mapped = settings.store.accountBackends[user.id];
-            const exists = PREDEFINED_SERVERS.some(s => s.id === mapped) || settings.store.customServers.some(s => s.id === mapped);
-            if (mapped && exists && mapped !== settings.store.backend) {
-                settings.store.backend = mapped;
-                location.reload();
-            }
-        },
-
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
             // work of art, basically it makes spoilering on your own attachments ACTUALLY WORK!!!
@@ -1442,6 +1531,40 @@ export default definePlugin({
             replacement: {
                 match: /if\(""==(\i)\)throw Error\("string is no integer"\)/g,
                 replace: 'if(""==$1)return this.ZERO'
+            }
+        },
+        {
+            find: "Switching accounts failed because there was no token",
+            replacement: [
+                {
+                    match: /\i\.log\(`Switching account to \$\{(\i)\}`/,
+                    replace: "if($self.switchAccountBackend($1))return Promise.resolve();$&"
+                },
+                {
+                    match: /if\(null==(\i)\|\|""===\1\)return void (\i\.\i)\.dispatch\(\{type:"MULTI_ACCOUNT_VALIDATE_TOKEN_FAILURE",userId:(\i)\}\);/,
+                    replace: '$&if($self.isLinkedElsewhere($3))return void $2.dispatch({type:"MULTI_ACCOUNT_VALIDATE_TOKEN_SUCCESS",userId:$3});'
+                }
+            ]
+        },
+        {
+            find: "[WS CLOSED] because of authentication failure, marking as closed.",
+            replacement: {
+                match: /_handleClose\((\i),(\i),(\i)\)\{/,
+                replace: "$&$self.onGatewayClose($2,$3);"
+            }
+        },
+        {
+            find: 'navId:"manage-multi-account"',
+            replacement: {
+                match: /(color:"text-default",variant:"text-sm\/normal",children:\i\}\)\]\}\),\i)\]/,
+                replace: "$1,$self.renderLinkedBackend(arguments[0].user.id)]"
+            }
+        },
+        {
+            find: ".getIsValidatingUsers(),multiAccountUsers:",
+            replacement: {
+                match: /isLoading:\i\.\i\.getIsValidatingUsers\(\)/g,
+                replace: "isLoading:!1"
             }
         },
         {
