@@ -135,3 +135,10 @@
 .vc-endpoint-linked-backend {
     text-align: start;
 }
+
+.vc-endpoint-gif-providers {
+    display: flex;
+    gap: 8px;
+    order: 1;
+    margin-left: auto;
+}

@@ -142,6 +142,18 @@ export const settings = definePluginSettings({
             "that account via Discord's own account switcher also switches the backend, followed by a reload.",
         default: {} as Record<string, string>
     },
+    accountAvatars: {
+        type: OptionType.CUSTOM,
+        description: "Full avatar URL and backend id of each account, saved whenever it connects, so accounts " +
+            "from other backends still show their avatar in the account switcher.",
+        default: {} as Record<string, { url: string; backend: string; }>
+    },
+    gifProvider: {
+        type: OptionType.CUSTOM,
+        description: "GIF provider picked in the GIF picker for each backend that offers more than one. " +
+            "Keys are backend ids, values are provider ids like klipy or giphy.",
+        default: {} as Record<string, string>
+    },
     useChromiumVideoPlayer: {
         type: OptionType.BOOLEAN,
         description: "Use a plain HTML5 video element with the browser's default controls for attachments " +

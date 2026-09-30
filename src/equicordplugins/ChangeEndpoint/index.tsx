@@ -9,14 +9,15 @@ import "./components/styles.css";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { WebsiteIcon } from "@components/Icons";
 import SettingsPlugin from "@plugins/_core/settings";
+import { getIntlMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import { openModalLazy } from "@utils/modal";
 import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, User } from "@vencord/discord-types";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { AuthenticationStore, Avatar, Button, ChannelStore, ContextMenuApi, DraftType, FluxDispatcher, GuildStore, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, useState } from "@webpack/common";
-import type { ComponentType, ReactNode } from "react";
+import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, UserStore, useState } from "@webpack/common";
+import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
 import { PREDEFINED_SERVERS } from "./servers";
@@ -643,6 +644,13 @@ function installXHRSanitiser() {
             installGuildProfileResponseExpander(this);
         }
 
+        const gifProvider = GIF_API_RE.test(pathname) && currentGifProvider();
+        if (gifProvider) {
+            const withProvider = new URL(urlStr, location.origin);
+            withProvider.searchParams.set("provider", gifProvider);
+            url = withProvider.href;
+        }
+
         return Reflect.apply(OriginalOpen, this, [method, url, ...rest]);
     };
 
@@ -759,10 +767,112 @@ function getLinkedBackend(userId: string) {
     return exists && backend !== connectedBackend ? backend : null;
 }
 
+function accountAvatarURL(user: User) {
+    const saved = settings.store.accountAvatars[user.id];
+    return saved && saved.backend !== connectedBackend ? saved.url : user.getAvatarURL(undefined, 40);
+}
+
+function saveAccountAvatar() {
+    const user = UserStore.getCurrentUser();
+    if (!user || !connectedBackend) return;
+
+    const url = user.getAvatarURL(undefined, 80);
+    const saved = settings.store.accountAvatars[user.id];
+    if (saved?.url === url && saved.backend === connectedBackend) return;
+
+    settings.store.accountAvatars = { ...settings.store.accountAvatars, [user.id]: { url, backend: connectedBackend } };
+}
+
+const withHttps = (endpoint: string) => /^\w+:\/\//.test(endpoint) ? endpoint : "https:" + endpoint;
+
+const GIF_API_RE = /\/gifs\/(?:search|trending|trending-gifs|suggest|trending-search)$/;
+const GIF_PROVIDER_NAMES: Record<string, string> = { klipy: "Klipy", giphy: "GIPHY", tenor: "Tenor" };
+const GIF_PROVIDER_KEYS: Array<"gifProvider"> = ["gifProvider"];
+let gifProviders: string[] = [];
+
+const gifProviderName = (provider: string) => GIF_PROVIDER_NAMES[provider] ?? provider;
+
+function currentGifProvider(): string | undefined {
+    const chosen = connectedBackend ? settings.store.gifProvider[connectedBackend] : undefined;
+    if (chosen && gifProviders.includes(chosen)) return chosen;
+    return gifProviders.includes("klipy") ? "klipy" : gifProviders[0];
+}
+
+async function loadGifProviders() {
+    const api = getApiEndpoint();
+    if (!api) return;
+
+    try {
+        const res = await fetch(new URL("/_spacebar/api/v1/integrations/gif", withHttps(api)));
+        if (res.ok) {
+            const { providers }: { providers: Record<string, { available: boolean; }>; } = await res.json();
+            gifProviders = Object.keys(providers).filter(p => providers[p].available);
+            return;
+        }
+    } catch (e) {
+        logger.debug("Instance has no Spacebar GIF integrations endpoint", e);
+    }
+
+    try {
+        const { body } = await RestAPI.get({ url: "/gifs" });
+        gifProviders = body.map((p: { api_name: string; }) => p.api_name);
+    } catch (e) {
+        logger.debug("Instance doesn't list its GIF providers", e);
+    }
+}
+
+async function selectGifProvider(provider: string) {
+    if (!connectedBackend || provider === currentGifProvider()) return;
+    settings.store.gifProvider = { ...settings.store.gifProvider, [connectedBackend]: provider };
+
+    const query = GIFPickerViewStore.getQuery();
+    const params = { media_format: GIFPickerViewStore.getSelectedFormat(), locale: LocaleStore.locale };
+    try {
+        if (query) {
+            const { body } = await RestAPI.get({ url: Constants.Endpoints.GIFS_SEARCH, query: { ...params, q: query } });
+            FluxDispatcher.dispatch({ type: "GIF_PICKER_QUERY_SUCCESS", items: body });
+            return;
+        }
+
+        const [trending, trendingGifs] = await Promise.all([
+            RestAPI.get({ url: Constants.Endpoints.GIFS_TRENDING, query: params }),
+            RestAPI.get({ url: Constants.Endpoints.GIFS_TRENDING_GIFS, query: params })
+        ]);
+        FluxDispatcher.dispatch({ type: "GIF_PICKER_TRENDING_FETCH_SUCCESS", trendingCategories: trending.body.categories, trendingGIFPreview: trending.body.gifs[0] });
+        FluxDispatcher.dispatch({ type: "GIF_PICKER_QUERY_SUCCESS", items: trendingGifs.body });
+    } catch (e) {
+        logger.error(`Couldn't load GIFs from ${provider}`, e);
+        showToast(`Couldn't load GIFs from ${gifProviderName(provider)}.`, Toasts.Type.FAILURE);
+    }
+}
+
+const GifProviderTabs = ErrorBoundary.wrap(function GifProviderTabs() {
+    settings.use(GIF_PROVIDER_KEYS);
+    if (gifProviders.length < 2) return null;
+
+    const current = currentGifProvider();
+    return (
+        <div className="vc-endpoint-gif-providers">
+            {gifProviders.map(provider => (
+                <Button
+                    key={provider}
+                    size={Button.Sizes.SMALL}
+                    color={provider === current ? Button.Colors.BRAND : Button.Colors.PRIMARY}
+                    onClick={() => selectGifProvider(provider)}
+                >
+                    {gifProviderName(provider)}
+                </Button>
+            ))}
+        </div>
+    );
+}, { noop: true });
+
 function openSwitchAccountLanding() {
     AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
     NavigationRouter.transitionTo("/login");
 }
+
+const serverWithCodeOfConduct = () => PREDEFINED_SERVERS.find(s => s.id === settings.store.backend && s.codeOfConduct);
 
 const GATEWAY_AUTH_FAILURE = /invalid token|user not found|user disabled|failed to decode token|unsupported token algorithm/i;
 
@@ -781,7 +891,7 @@ function AccountSwitcherMenu({ onClose }: { onClose(): void; }) {
                         id={account.id}
                         label={
                             <div className="vc-endpoint-account-row">
-                                <Avatar src={user.getAvatarURL(undefined, 40)} size="SIZE_24" aria-label={account.username} />
+                                <Avatar src={accountAvatarURL(user)} size="SIZE_24" aria-label={account.username} />
                                 <div className="vc-endpoint-account-name">
                                     <Text variant="text-sm/normal">{account.username}</Text>
                                     {!user.hasUniqueUsername() && <Text variant="text-sm/normal">#{account.discriminator}</Text>}
@@ -831,9 +941,7 @@ export default definePlugin({
         return isAltInviteHostName(url.host);
     },
 
-    withHttps(endpoint: string) {
-        return /^\w+:\/\//.test(endpoint) ? endpoint : "https:" + endpoint;
-    },
+    withHttps,
 
     guildifyAst,
 
@@ -932,6 +1040,23 @@ export default definePlugin({
         );
     },
 
+    accountAvatarURL,
+
+    gifSearchPlaceholder() {
+        const provider = currentGifProvider();
+        return !provider || provider === "klipy" ? getIntlMessage("SEARCH_KLIPY") : `Search ${gifProviderName(provider)}`;
+    },
+
+    renderGifProviderTabs(gifTab: ReactElement<{ isActive: boolean; }> | null) {
+        return gifTab?.props.isActive ? <GifProviderTabs key="vc-endpoint-gif-providers" /> : null;
+    },
+
+    renderGuildGuidelines() {
+        const server = serverWithCodeOfConduct();
+        if (!server?.codeOfConduct) return null;
+        return <>By creating a {settings.store.guildTerminology ? "guild" : "server"}, you agree to {server.name}'s <strong><MaskedLink href={server.codeOfConduct}>Code of Conduct</MaskedLink></strong>.</>;
+    },
+
     onGatewayClose(code: number, reason?: string) {
         if (code !== 4000 || !GATEWAY_AUTH_FAILURE.test(reason ?? "")) return;
         logger.warn(`Gateway rejected the token (${reason}), opening the account picker`);
@@ -1006,6 +1131,12 @@ export default definePlugin({
     },
 
     flux: {
+        CONNECTION_OPEN() {
+            saveAccountAvatar();
+            loadGifProviders();
+        },
+        CURRENT_USER_UPDATE: saveAccountAvatar,
+
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
             // work of art, basically it makes spoilering on your own attachments ACTUALLY WORK!!!
@@ -1039,6 +1170,8 @@ export default definePlugin({
         migrateDefaultBackend();
         migrateCustomServers();
         captureConnectedBackend();
+        saveAccountAvatar();
+        loadGifProviders();
         startGuildOrderSync();
         startDMUnreadPoll();
         installFetchSanitiser();
@@ -1273,11 +1406,17 @@ export default definePlugin({
             }
         },
         {
-            find: "Error getting provider for API request:",
+            find: "#{intl::SEARCH_KLIPY}",
             replacement: {
-                match: /function (\w+)\(\)\{try\{return \w+\.getConfig\(\{location:"gif_picker"\}\)\.provider\}catch\(\w+\)\{return \w+\.warn\("Error getting provider for API request:",\w+\),"tenor"\}\}/,
-                replace: 'function $1(){return"klipy"}'
-                // forces klipy ig
+                match: /\i\.intl\.string\(\i\.t#{intl::SEARCH_KLIPY}\)/,
+                replace: "$self.gifSearchPlaceholder()"
+            }
+        },
+        {
+            find: 'analyticsSource:"expression-picker"',
+            replacement: {
+                match: /role:"tablist","aria-label":[^,]{0,60},children:\[(\i),/,
+                replace: "$&$self.renderGifProviderTabs($1),"
             }
         },
         {
@@ -1547,6 +1686,14 @@ export default definePlugin({
             ]
         },
         {
+            find: "#{intl::CREATE_SERVER_GUIDELINES}",
+            predicate: () => serverWithCodeOfConduct() != null,
+            replacement: {
+                match: /\i\.intl\.format\(\i\.t#{intl::CREATE_SERVER_GUIDELINES},\{guidelinesURL:[^}]{0,40}\}\)/,
+                replace: "$self.renderGuildGuidelines()"
+            }
+        },
+        {
             find: "[WS CLOSED] because of authentication failure, marking as closed.",
             replacement: {
                 match: /_handleClose\((\i),(\i),(\i)\)\{/,
@@ -1555,9 +1702,22 @@ export default definePlugin({
         },
         {
             find: 'navId:"manage-multi-account"',
+            replacement: [
+                {
+                    match: /(color:"text-default",variant:"text-sm\/normal",children:\i\}\)\]\}\),\i)\]/,
+                    replace: "$1,$self.renderLinkedBackend(arguments[0].user.id)]"
+                },
+                {
+                    match: /src:(\i)\.getAvatarURL\(void 0,40\)/,
+                    replace: "src:$self.accountAvatarURL($1)"
+                }
+            ]
+        },
+        {
+            find: 'id:"manage-accounts"',
             replacement: {
-                match: /(color:"text-default",variant:"text-sm\/normal",children:\i\}\)\]\}\),\i)\]/,
-                replace: "$1,$self.renderLinkedBackend(arguments[0].user.id)]"
+                match: /src:(\i)\.getAvatarURL\(void 0,40\)(?=,size:\i\.\i\.SIZE_24,"aria-label":\i\.username)/,
+                replace: "src:$self.accountAvatarURL($1)"
             }
         },
         {

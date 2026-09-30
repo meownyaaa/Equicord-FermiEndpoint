@@ -8,6 +8,7 @@ export interface PredefinedServer {
     id: string;
     name: string;
     host: string;
+    codeOfConduct?: string;
 }
 
 export interface CustomServer {
@@ -22,6 +23,6 @@ export interface CustomServer {
 }
 
 export const PREDEFINED_SERVERS: PredefinedServer[] = [
-    { id: "spacebar", name: "Spacebar", host: "rory.server.spacebar.chat" },
-    { id: "harmony", name: "Harmony", host: "harmony.melodychat.org" }
+    { id: "spacebar", name: "Spacebar", host: "rory.server.spacebar.chat", codeOfConduct: "https://github.com/spacebarchat/spacebarchat/blob/master/CODE_OF_CONDUCT.md" },
+    { id: "harmony", name: "Harmony", host: "harmony.melodychat.org", codeOfConduct: "https://melodychat.org/coc/" }
 ];
