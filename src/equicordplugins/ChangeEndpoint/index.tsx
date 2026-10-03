@@ -431,9 +431,10 @@ const BOOST_FEATURES: GuildFeatures[] = [
 
 function maxOutGuildPremium(guild: any) {
     if (!guild) return;
-    guild.premium_tier = MAX_PREMIUM_TIER;
+    const properties = guild.properties ?? guild;
+    properties.premium_tier = MAX_PREMIUM_TIER;
+    properties.features = Array.from(new Set([...(properties.features ?? []), ...BOOST_FEATURES]));
     guild.premium_subscription_count = MAX_PREMIUM_SUBSCRIPTION_COUNT;
-    guild.features = Array.from(new Set([...(guild.features ?? []), ...BOOST_FEATURES]));
 }
 
 // guilds that finished loading before this interceptor was installed never
@@ -454,6 +455,7 @@ function boostPerkInterceptor(event: any) {
             maxOutGuildPremium(event.guild);
             break;
         case "READY":
+        case "CONNECTION_OPEN":
             event.guilds?.forEach(maxOutGuildPremium);
             break;
     }
