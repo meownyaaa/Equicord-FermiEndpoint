@@ -18,7 +18,7 @@ const MENUS: Array<[name: string, load: () => Promise<boolean>]> = [
     ["user settings", extractAndLoadChunksLazy(["USER_SETTINGS_MODAL_OPEN", "stackNextByDefault:!0"], loaderMatcher(String.raw`USER_SETTINGS_MODAL_OPEN.{0,300}?`))],
     ["guild context menu", extractAndLoadChunksLazy(["guildNode:", '"unavailable-guilds-button"'], loaderMatcher(String.raw`\(0,\i\.\i\)\(\i,async\(\)=>\{let\{default:\i\}=await `, String.raw`(?=;return \i=>\(0,\i\.jsx\)\(\i,\{\.\.\.\i,guild:\i\}\))`))],
     ["user context menu", extractAndLoadChunksLazy(["handleUserContextMenu(", "parsedUserId"], loaderMatcher(String.raw`handleUserContextMenu\(.{0,150}?`))],
-    ["user profile", extractAndLoadChunksLazy(["initialTabSection:", "originGuildId:", "openModalLazy"], loaderMatcher(String.raw`openModalLazy\)\(async\(\)=>\{let \i=\(await `))],
+    ["user profile", extractAndLoadChunksLazy(["USER_PROFILE_MODAL_OPEN:", "USER_PROFILE_MODAL_CLOSE:", "openModalLazy"], loaderMatcher(String.raw`openModalLazy\)\(async\(\)=>\{let \i=\(await `))],
     ["settings context menu", extractAndLoadChunksLazy(["handleOpenSettingsContextMenu"], loaderMatcher(String.raw`handleOpenSettingsContextMenu=.{0,150}?`))],
     ["guild settings", extractAndLoadChunksLazy(['"GuildSettingsActionCreators"'], loaderMatcher(String.raw`async open\([^)]{0,30}\)\{await `))],
 ];
