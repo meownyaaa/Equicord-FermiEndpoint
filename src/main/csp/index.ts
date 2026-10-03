@@ -5,9 +5,11 @@
  */
 
 import { NativeSettings } from "@main/settings";
-import { session } from "electron";
+import { OnHeadersReceivedListenerDetails, session } from "electron";
 
 type PolicyMap = Record<string, string[]>;
+
+export const ResponseHeaderPatchers: Array<(details: OnHeadersReceivedListenerDetails, headers: PolicyMap) => void> = [];
 
 export const ConnectSrc = ["connect-src"];
 export const ImageSrc = [...ConnectSrc, "img-src"];
@@ -139,8 +141,11 @@ const patchCsp = (headers: PolicyMap) => {
 };
 
 export function initCsp() {
-    session.defaultSession.webRequest.onHeadersReceived(({ responseHeaders, resourceType }, cb) => {
+    session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
+        const { responseHeaders, resourceType } = details;
         if (responseHeaders) {
+            for (const patch of ResponseHeaderPatchers) patch(details, responseHeaders);
+
             if (resourceType === "mainFrame")
                 patchCsp(responseHeaders);
 

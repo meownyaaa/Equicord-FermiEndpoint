@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { ResponseHeaderPatchers } from "@main/csp";
 import { app, desktopCapturer, IpcMainInvokeEvent, session } from "electron";
 
 // spacebar voice servers listen on udp 6000, which chromium treats as an unsafe (x11) port and
@@ -11,6 +12,15 @@ import { app, desktopCapturer, IpcMainInvokeEvent, session } from "electron";
 const allowedPorts = new Set(app.commandLine.getSwitchValue("explicitly-allowed-ports").split(",").filter(Boolean));
 allowedPorts.add("6000");
 app.commandLine.appendSwitch("explicitly-allowed-ports", [...allowedPorts].join(","));
+
+const CLOUD_UPLOAD_RE = /^https:\/\/[^/]+\/attachments\/\d+\/CLOUD_[^/]+\/\d+\/[^/?]+$/;
+
+ResponseHeaderPatchers.push(({ url }, headers) => {
+    if (!CLOUD_UPLOAD_RE.test(url) || Object.keys(headers).some(h => h.toLowerCase() === "access-control-allow-origin")) return;
+    headers["Access-Control-Allow-Origin"] = ["*"];
+    headers["Access-Control-Allow-Methods"] = ["GET, PUT, POST, PATCH, DELETE, OPTIONS"];
+    headers["Access-Control-Allow-Headers"] = ["*"];
+});
 
 let handlerRegistered = false;
 let pendingSourceName: string | null = null;
