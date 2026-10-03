@@ -11,7 +11,7 @@
 
 
     /* position trailing/leading titlebar elements alongside WCO */
-    [data-fullscreen] > [class*="bar_"] {
+    [data-fullscreen] > [--title_bar] {
         [class*="leading_"] {
             padding-left: env(titlebar-area-x, 0);
         }
@@ -25,22 +25,22 @@
     [data-popout-root="true"] {
         [class*="headerWrapper_"] {
             app-region: drag;
+        }
 
-            [class*="headerBarChildren_"] {
-                padding-left: env(titlebar-area-x, 0);
-            }
+        [--header_headerBarChildren] {
+            padding-left: env(titlebar-area-x, 0);
+        }
 
-            /* position trailing toolbar elements alongside WCO */
-            [class*="toolbar_"] {
-                padding-right: calc(100vw - env(titlebar-area-width, 100%) - env(titlebar-area-x, 0px));
-            }
+        /* position trailing toolbar elements alongside WCO */
+        [--header_toolbar] {
+            padding-right: calc(100vw - env(titlebar-area-width, 100%) - env(titlebar-area-x, 0px));
         }
     }
 }
 
 /* force hide trailing icons when standalone so there's no ugly pixel overflow */
 @media all and (display-mode: standalone) {
-    [data-fullscreen] > [class*="bar_"] {
+    [data-fullscreen] > [--title_bar] {
         [class*="trailing_"],
         [class*="leading"] {
             display: none;

@@ -13,6 +13,7 @@ import { Margins } from "@components/margins";
 import { Devs, EquicordDevs } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
 import { sendMessage } from "@utils/discord";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import definePlugin, { OptionType } from "@utils/types";
 import { Message } from "@vencord/discord-types";
 import { proxyLazyWebpack } from "@webpack";
@@ -96,6 +97,12 @@ export default definePlugin({
     authors: [Devs.thororen, Devs.sadan, Devs.nin0dev, EquicordDevs.VillainsRule, Devs.Davri],
     settings,
     managedStyle,
+
+    start() {
+        setStyleClassNamesFromModule(managedStyle, "fwd", ["forwardPreview", "contentWrapper", "forwardPreviewMessage"]);
+        setStyleClassNamesFromModule(managedStyle, "tags", ["tagGroup", "tagList", "tag"]);
+    },
+
     patches: [
         {
             find: "#{intl::MESSAGE_FORWARDING_NSFW_NOT_ALLOWED}",

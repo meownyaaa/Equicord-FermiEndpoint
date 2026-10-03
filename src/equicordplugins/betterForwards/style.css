@@ -78,19 +78,20 @@
     text-overflow: ellipsis;
 }
 
-[class^="forwardPreview"] {
+[--fwd_forwardPreview],
+[--fwd_forwardPreviewMessage] {
     height: fit-content;
 
-    > [class^="contentWrapper"] {
+    > [--fwd_contentWrapper] {
         max-height: 250px;
         overflow-y: auto;
         scrollbar-width: thin;
 
-        > [class^="forwardPreviewMessage"] {
+        > [--fwd_forwardPreviewMessage] {
             flex-shrink: 0;
         }
 
-        [class^="tagList"] > [class^="tag"] {
+        [--tags_tagList] > [--tags_tag] {
             min-width: 0;
 
             [data-text-variant] {

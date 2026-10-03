@@ -14,7 +14,9 @@
 
         > [class*="nonVisualMediaItem"] {
             width: 100%;
+        }
 
+        &:has(> [class*="nonVisualMediaItem"]) {
             [class*="mosaicItem"] {
                 min-width: 0;
                 max-width: unset;

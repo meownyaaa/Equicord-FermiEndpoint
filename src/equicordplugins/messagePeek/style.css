@@ -15,11 +15,11 @@
     color: var(--text-default);
 }
 
-[class*="interactiveSelected__"] .vc-message-peek-timestamp {
+[--dm_interactiveSelected] .vc-message-peek-timestamp {
     color: var(--white);
 }
 
-[class*="interactive__"]:hover .vc-message-peek-timestamp {
+[--dm_interactive]:hover .vc-message-peek-timestamp {
     display: none;
 }
 
@@ -34,7 +34,7 @@
     margin-top: 0.8px;
 }
 
-[class*="interactive__"]:hover .vc-message-peek-icon svg path {
+[--dm_interactive]:hover .vc-message-peek-icon svg path {
     fill: var(--white) !important;
 }
 

@@ -8,6 +8,7 @@ import { definePluginSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs, EquicordDevs } from "@utils/constants";
 import { useFixedTimer } from "@utils/react";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import { formatDurationMs } from "@utils/text";
 import definePlugin, { OptionType } from "@utils/types";
 import { PassiveUpdateState, VoiceState } from "@vencord/discord-types";
@@ -235,6 +236,7 @@ export default definePlugin({
     },
 
     start() {
+        setStyleClassNamesFromModule(alignedChatInputFix, "rtc", ["connection", "voiceUsers", "inner"]);
         if (settings.store.watchLargeGuilds) {
             this.subscribeToAllGuilds();
         }

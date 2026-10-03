@@ -64,13 +64,7 @@
     margin-bottom: 5px;
 }
 
-.questify-setting-switch [class*="container_"] [class*="labelContainer_"] label {
-    font-size: 16px;
-    font-weight: 500;
-}
-
-.questify-setting-subtle-switch [class*="container_"] [class*="labelContainer_"] label,
-.questify-setting-switch [class*="container_"] [class*="labelContainer_"] div {
+.questify-setting-subtle-switch > * > :first-child > label {
     font-size: 14px;
     font-weight: 400;
 }
@@ -106,7 +100,7 @@
 
 .questify-setting [data-floating-ui-focusable][class*="selectDropdown"],
 .questify-setting [data-mana-component="select-input-field"] > [class*="selectField"],
-.questify-setting [data-mana-component="select-input-field"] [class*="tagList"] > div {
+.questify-setting [data-mana-component="select-input-field"] [data-mana-component="tag-group"] > * > div {
     border-radius: 3px;
 }
 

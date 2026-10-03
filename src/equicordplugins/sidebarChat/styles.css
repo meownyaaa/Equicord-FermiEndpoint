@@ -1,4 +1,4 @@
-[class*="content"] > [class*="page"] > * {
+[--base_content] > [--base_page] > * {
     min-width: 0;
 }
 

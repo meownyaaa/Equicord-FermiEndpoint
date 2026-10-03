@@ -4,12 +4,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import "./styles.css";
-
 import { EquicordDevs } from "@utils/constants";
 import { getIntlMessage, openUserProfile } from "@utils/discord";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import definePlugin from "@utils/types";
 import { Button, React, RelationshipStore, TextInput, UserStore } from "@webpack/common";
+
+import style from "./styles.css?managed";
 
 let lastSearch = "";
 let updateFunc = (v: any) => { };
@@ -19,6 +20,12 @@ export default definePlugin({
     description: "Allows you to search in blocked users list and makes names selectable in settings.",
     tags: ["Appearance", "Shortcuts"],
     authors: [EquicordDevs.TheArmagan],
+    managedStyle: style,
+
+    start() {
+        setStyleClassNamesFromModule(style, "blocked", ["usersList", "userInfo"]);
+    },
+
     patches: [
         {
             find: '"],{numberOfBlockedUsers:',

@@ -7,6 +7,7 @@
 import { addThemeChangeListener, removeThemeChangeListener } from "@api/Themes";
 import { Devs } from "@utils/constants";
 import { sleep } from "@utils/misc";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import definePlugin from "@utils/types";
 import { GuildReadStateStore, NotificationSettingsStore, RelationshipStore, ThemeStore } from "@webpack/common";
 
@@ -108,6 +109,8 @@ export default definePlugin({
 
     ctrl: new AbortController(),
     start() {
+        setStyleClassNamesFromModule(managedStyle, "title", ["bar", "leading", "trailing", "winButtons"]);
+        setStyleClassNamesFromModule(managedStyle, "header", ["headerBar", "headerBarChildren", "toolbar"]);
 
         // installability
         setManifest();

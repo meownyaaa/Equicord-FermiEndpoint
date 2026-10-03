@@ -10,6 +10,7 @@ import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs, EquicordDevs } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
 import { getCurrentChannel } from "@utils/discord";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import definePlugin from "@utils/types";
 import { Channel, Guild, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
@@ -383,6 +384,7 @@ export default definePlugin({
     },
 
     async start() {
+        setStyleClassNamesFromModule(style, "base", ["content", "page", "sidebar"]);
         restorePersistedPopouts();
     },
 

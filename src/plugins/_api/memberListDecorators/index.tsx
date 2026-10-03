@@ -17,6 +17,7 @@
 */
 
 import { Devs } from "@utils/constants";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import definePlugin from "@utils/types";
 
 import managedStyle from "./style.css?managed";
@@ -27,6 +28,10 @@ export default definePlugin({
     authors: [Devs.TheSun, Devs.Ven],
 
     managedStyle,
+
+    start() {
+        setStyleClassNamesFromModule(managedStyle, "name", ["layout", "withDisplayNameStyles", "nameAndDecorators"]);
+    },
 
     patches: [
         {

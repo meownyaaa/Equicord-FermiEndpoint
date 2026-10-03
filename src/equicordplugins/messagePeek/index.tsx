@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import "./style.css";
-
 import { DecoratorProps } from "@api/MemberListDecorators";
 import { isPluginEnabled } from "@api/PluginManager";
 import { definePluginSettings } from "@api/Settings";
@@ -15,11 +13,14 @@ import showMeYourName from "@plugins/showMeYourName";
 import { Devs, EquicordDevs } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
 import { classes, pluralize } from "@utils/misc";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import definePlugin, { OptionType } from "@utils/types";
 import { Activity, ApplicationStream, Channel, Message, OnlineStatus, User } from "@vencord/discord-types";
 import { MessageFlags } from "@vencord/discord-types/enums";
 import { findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findCssClassesLazy } from "@webpack";
 import { ChannelStore, ExperimentStore, MessageStore, Parser, RelationshipStore, SnowflakeUtils, UserGuildSettingsStore, UserStore, useStateFromStores } from "@webpack/common";
+
+import style from "./style.css?managed";
 
 const cl = classNameFactory("vc-message-peek-");
 
@@ -242,6 +243,7 @@ export default definePlugin({
     tags: ["Appearance", "Chat"],
     authors: [Devs.prism, EquicordDevs.justjxke],
     settings,
+    managedStyle: style,
     patches: [
         {
             find: "PrivateChannel.renderAvatar",
@@ -253,6 +255,7 @@ export default definePlugin({
     ],
 
     async start() {
+        setStyleClassNamesFromModule(style, "dm", ["channel", "interactive", "interactiveSelected"]);
         const channels = ChannelStore.getSortedPrivateChannels()
             .slice(0, 25)
             .filter(c => !MessageStore.getLastMessage(c.id));

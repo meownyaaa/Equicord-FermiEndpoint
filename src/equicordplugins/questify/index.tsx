@@ -9,6 +9,7 @@ import { addServerListElement, removeServerListElement, ServerListRenderPosition
 import { PlainSettings, Settings } from "@api/Settings";
 import { ErrorBoundary } from "@components/index";
 import { EquicordDevs } from "@utils/constants";
+import { setStyleClassNamesFromModule } from "@utils/styleClassNames";
 import definePlugin, { StartAt } from "@utils/types";
 import type { Quest, QuestUserStatus } from "@vencord/discord-types";
 import { findComponentByCodeLazy, onceReady } from "@webpack";
@@ -655,6 +656,8 @@ export default definePlugin({
     renderQuestifyButton: ErrorBoundary.wrap(QuestButton, { noop: true }),
 
     start() {
+        setStyleClassNamesFromModule(managedStyle, "tile", ["rewardDescriptionContainer", "progressWrapper", "textContainer"]);
+        setStyleClassNamesFromModule(managedStyle, "hero", ["container", "positionContentOverBackground", "contents", "bottomRow", "partnerBranding"]);
         if (!enabledOnStartup && PlainSettings.plugins.Questify?.enabled) {
             setRestartDirty(true);
         }

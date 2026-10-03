@@ -1,17 +1,7 @@
 /* Miscellaneous */
 
-/* Fix to overwrite bad CSS in callTimer/alignedChatInputFix.css */
-[class*="panels"] [class*="questProgressWrapper"] [class*="outer"] > [class*="inner"] {
-    height: 100% !important;
-}
-
-/* Fix to overwrite bad CSS in callTimer/alignedChatInputFix.css */
-[class*="panels"] [class*="questProgressWrapper"] > div {
-    opacity: 1 !important;
-}
-
 /* Fix oversized confetti blocking Quest buttons. */
-[class*="rewardDescriptionContainer"] [class*="progressWrapper"] > [class*="confetti"] {
+[--tile_rewardDescriptionContainer] [--tile_progressWrapper] > [class*="confetti"] {
     pointer-events: none;
 }
 
@@ -66,18 +56,18 @@
 }
 
 /* Quest name color. */
-.questify-quest-item-restyle > div > div[class*="rewardDescriptionContainer"] > div[class*="textContainer"] > [class*="eyebrow"] {
+.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > [class*="eyebrow"] {
     color: var(--questify-quest-name) !important;
 }
 
 /* Reward title + Orbs reward title text color. */
-.questify-quest-item-restyle > div > div[class*="rewardDescriptionContainer"] > div[class*="textContainer"] > div[class*="text-md"],
-.questify-quest-item-restyle > div > div[class*="rewardDescriptionContainer"] > div[class*="textContainer"] > div[class*="text-md"] > span {
+.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > div[class*="text-md"],
+.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > div[data-text-variant^="text-md"] > span {
     color: var(--questify-reward-title) !important;
 }
 
 /* Quest description text color. */
-.questify-quest-item-restyle > div > div[class*="rewardDescriptionContainer"] > div[class*="textContainer"] > div[class*="text-sm"] {
+.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > div[class*="text-sm"] {
     color: var(--questify-reward-description) !important;
 }
 
@@ -86,11 +76,11 @@
 }
 
 /* Promoted by XYZ text color. */
-.questify-quest-item-restyle > div[class*="container"] > div[class*="positionContentOverBackground"] > div[class*="contents"] > div[class*="bottomRow"] > div[class*="text-sm"] {
+.questify-quest-item-restyle > div[--hero_container] > div[--hero_positionContentOverBackground] > div[--hero_contents] > div[--hero_bottomRow] > div[class*="text-sm"] {
     color: var(--questify-reward-description) !important;
 }
 
-.questify-quest-item-contrast-logo > div[class*="container"] > div[class*="positionContentOverBackground"] > div[class*="contents"] > div[class*="partnerBranding"] > img {
+.questify-quest-item-contrast-logo > div[--hero_container] > div[--hero_positionContentOverBackground] > div[--hero_contents] > div[--hero_partnerBranding] > img {
     filter: drop-shadow(0 0 10px rgb(0 0 0 / 80%));
 }
 

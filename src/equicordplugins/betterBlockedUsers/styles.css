@@ -1,4 +1,4 @@
-[class*="usersList"] [class*="text"] {
+[--blocked_usersList] [class*="text"] {
     user-select: text !important;
 }
 
