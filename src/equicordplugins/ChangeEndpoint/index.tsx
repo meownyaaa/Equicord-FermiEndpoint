@@ -1703,6 +1703,13 @@ export default definePlugin({
             }
         },
         {
+            find: '"VOICE_STATE_UPDATES",voiceStates:',
+            replacement: {
+                match: /null!=(\i)\.member&&(?=\i\(\1\.guild_id,\1\.member\.user,\1\.member\))/g,
+                replace: "null!=$1.member?.user&&"
+            }
+        },
+        {
             find: 'navId:"manage-multi-account"',
             replacement: [
                 {
