@@ -782,7 +782,7 @@ function saveAccountAvatar() {
     const saved = settings.store.accountAvatars[user.id];
     if (saved?.url === url && saved.backend === connectedBackend) return;
 
-    settings.store.accountAvatars = { ...settings.store.accountAvatars, [user.id]: { url, backend: connectedBackend } };
+    settings.store.accountAvatars = { ...settings.plain.accountAvatars, [user.id]: { url, backend: connectedBackend } };
 }
 
 const withHttps = (endpoint: string) => /^\w+:\/\//.test(endpoint) ? endpoint : "https:" + endpoint;
@@ -825,7 +825,7 @@ async function loadGifProviders() {
 
 async function selectGifProvider(provider: string) {
     if (!connectedBackend || provider === currentGifProvider()) return;
-    settings.store.gifProvider = { ...settings.store.gifProvider, [connectedBackend]: provider };
+    settings.store.gifProvider = { ...settings.plain.gifProvider, [connectedBackend]: provider };
 
     const query = GIFPickerViewStore.getQuery();
     const params = { media_format: GIFPickerViewStore.getSelectedFormat(), locale: LocaleStore.locale };
