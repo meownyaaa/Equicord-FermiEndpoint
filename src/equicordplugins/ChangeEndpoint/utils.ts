@@ -51,7 +51,7 @@ export const getGatewayEndpoint = () =>
     resolveEndpoint("gatewayEndpoint", host => `wss://gateway.${host}`);
 
 export const getMediaProxyEndpoint = () => {
-    const endpoint = resolveEndpoint("mediaProxyEndpoint", host => `cdn.${host}`);
+    const endpoint = resolveEndpoint("mediaProxyEndpoint", host => `cdn.${host}`) ?? getCdnHost();
     return endpoint && `//${endpoint}`;
 };
 

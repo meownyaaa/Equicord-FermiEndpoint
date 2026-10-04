@@ -65,7 +65,7 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
 
     const canSave = !!name.trim() && (type === "simple"
         ? !!host.trim()
-        : !!(apiEndpoint.trim() && cdnHost.trim() && gatewayEndpoint.trim() && mediaProxyEndpoint.trim()));
+        : !!(apiEndpoint.trim() && cdnHost.trim() && gatewayEndpoint.trim()));
 
     const save = () => {
         const id = existing?.id ?? makeServerId();
@@ -110,10 +110,10 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
             ) : (
                 <>
                     <Paragraph className={Margins.top8}>Each endpoint separately, for instances that don't follow the standard convention. Values come from https://&lt;host&gt;/api/policies/instance/domains.</Paragraph>
-                    <TextInput className={Margins.top8} value={apiEndpoint} placeholder="API endpoint" onChange={setApiEndpoint} />
-                    <TextInput className={Margins.top8} value={cdnHost} placeholder="CDN host" onChange={setCdnHost} />
-                    <TextInput className={Margins.top8} value={gatewayEndpoint} placeholder="Gateway endpoint" onChange={setGatewayEndpoint} />
-                    <TextInput className={Margins.top8} value={mediaProxyEndpoint} placeholder="Media proxy endpoint" onChange={setMediaProxyEndpoint} />
+                    <div className={Margins.top8}><TextInput value={apiEndpoint} placeholder="API endpoint" onChange={setApiEndpoint} /></div>
+                    <div className={Margins.top8}><TextInput value={cdnHost} placeholder="CDN host" onChange={setCdnHost} /></div>
+                    <div className={Margins.top8}><TextInput value={gatewayEndpoint} placeholder="Gateway endpoint" onChange={setGatewayEndpoint} /></div>
+                    <div className={Margins.top8}><TextInput value={mediaProxyEndpoint} placeholder="Media proxy endpoint (optional, defaults to the CDN host)" onChange={setMediaProxyEndpoint} /></div>
                 </>
             )}
 
