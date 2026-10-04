@@ -8,7 +8,7 @@ import { definePluginSettings, Settings } from "@api/Settings";
 import { localStorage } from "@utils/localStorage";
 import { Logger } from "@utils/Logger";
 import { OptionType } from "@utils/types";
-import { Alerts, Button, Toasts } from "@webpack/common";
+import { Alerts, Button, showToast } from "@webpack/common";
 
 const logger = new Logger("ChangeEndpoint");
 
@@ -89,18 +89,10 @@ function clearCachedLoginData() {
             if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
         }
 
-        Toasts.show({
-            id: Toasts.genId(),
-            message: "Cleared cached login data",
-            type: Toasts.Type.SUCCESS
-        });
+        showToast("Cleared cached login data", "success");
     } catch (e) {
         logger.error("Failed to clear cached data", e);
-        Toasts.show({
-            id: Toasts.genId(),
-            message: "Failed to clear cached data.",
-            type: Toasts.Type.FAILURE
-        });
+        showToast("Failed to clear cached data.", "failure");
     }
 }
 

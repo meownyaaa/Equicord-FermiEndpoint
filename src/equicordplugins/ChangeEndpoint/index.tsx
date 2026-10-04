@@ -16,7 +16,7 @@ import { openModalLazy } from "@utils/modal";
 import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, User } from "@vencord/discord-types";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, Toasts, useRef, UserStore, useState } from "@webpack/common";
+import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, useRef, UserStore, useState } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -698,9 +698,9 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
         setUploading(true);
         try {
             await RestAPI.patch({ url: `/channels/${channel.id}`, body: { icon } });
-            showToast(icon ? "channel icon updated" : "channel icon cleared", Toasts.Type.SUCCESS);
+            showToast(icon ? "channel icon updated" : "channel icon cleared", "success");
         } catch (e) {
-            showToast("failed to update channel icon", Toasts.Type.FAILURE);
+            showToast("failed to update channel icon", "failure");
         } finally {
             setUploading(false);
         }
@@ -717,7 +717,7 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
             reader.onerror = () => resolve(null);
             reader.readAsDataURL(file);
         });
-        if (!imageUri) return showToast("couldn't read that image", Toasts.Type.FAILURE);
+        if (!imageUri) return showToast("couldn't read that image", "failure");
 
         await loadIconCropModalChunks();
         openModalLazy(async () => props => (
@@ -844,7 +844,7 @@ async function selectGifProvider(provider: string) {
         FluxDispatcher.dispatch({ type: "GIF_PICKER_QUERY_SUCCESS", items: trendingGifs.body });
     } catch (e) {
         logger.error(`Couldn't load GIFs from ${provider}`, e);
-        showToast(`Couldn't load GIFs from ${gifProviderName(provider)}.`, Toasts.Type.FAILURE);
+        showToast(`Couldn't load GIFs from ${gifProviderName(provider)}.`, "failure");
     }
 }
 
