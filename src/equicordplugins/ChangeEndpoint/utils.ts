@@ -4,15 +4,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { CustomServer, PREDEFINED_SERVERS } from "./servers";
+import { CustomServer, EndpointField, PREDEFINED_SERVERS } from "./servers";
 import { settings } from "./settings";
 
 function activeCustomServer(): CustomServer | undefined {
     return settings.store.customServers.find(s => s.id === settings.store.backend);
-}
-
-function predefinedHost(): string | null {
-    return PREDEFINED_SERVERS.find(s => s.id === settings.store.backend)?.host ?? null;
 }
 
 export function simplifyHost(host: string): string {
@@ -23,22 +19,21 @@ export function simplifyHost(host: string): string {
 }
 
 // fix some bullshit where itll go https://https//*server url* lol
-const HOST_ONLY_ADVANCED_FIELDS = new Set<keyof CustomServer>(["cdnHost", "mediaProxyEndpoint"]);
+const HOST_ONLY_ADVANCED_FIELDS = new Set<EndpointField>(["cdnHost", "mediaProxyEndpoint"]);
 
-function resolveEndpoint(advancedField: keyof CustomServer, build: (host: string) => string): string | null {
-    const predefined = predefinedHost();
-    if (predefined) return build(predefined);
+function resolveEndpoint(field: EndpointField, build: (host: string) => string): string | null {
+    const predefined = PREDEFINED_SERVERS.find(s => s.id === settings.store.backend);
+    const custom = predefined ? undefined : activeCustomServer();
+    const explicit = predefined ? predefined.endpoints : custom?.type === "advanced" ? custom : undefined;
 
-    const custom = activeCustomServer();
-    if (!custom) return null;
-
-    if (custom.type === "advanced") {
-        let value = (custom[advancedField] as string | undefined)?.trim();
-        if (value && HOST_ONLY_ADVANCED_FIELDS.has(advancedField)) value = simplifyHost(value);
+    if (explicit) {
+        let value = explicit[field]?.trim();
+        if (value && HOST_ONLY_ADVANCED_FIELDS.has(field)) value = simplifyHost(value);
         return value || null;
     }
 
-    return custom.host?.trim() ? build(simplifyHost(custom.host)) : null;
+    const host = predefined?.host ?? custom?.host?.trim();
+    return host ? build(simplifyHost(host)) : null;
 }
 
 export const getApiEndpoint = () =>

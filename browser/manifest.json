@@ -12,7 +12,8 @@
         "*://*.discord.com/*",
         "https://raw.githubusercontent.com/*",
         "https://cdn.rory.server.spacebar.chat/*",
-        "https://cdn.harmony.melodychat.org/*"
+        "https://cdn.harmony.melodychat.org/*",
+        "https://share.it-voip.4siwi.net/*"
     ],
     "permissions": [
         "declarativeNetRequestWithHostAccess"
