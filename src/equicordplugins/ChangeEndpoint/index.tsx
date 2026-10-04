@@ -16,7 +16,7 @@ import { openModalLazy } from "@utils/modal";
 import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, User } from "@vencord/discord-types";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, useRef, UserStore, useState } from "@webpack/common";
+import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, useEffect, useRef, UserStore, useState } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -880,6 +880,42 @@ function openSwitchAccountLanding() {
     NavigationRouter.transitionTo("/login");
 }
 
+const STUCK_LOADING_MS = 15_000;
+
+const StuckLoadingNotice = ErrorBoundary.wrap(() => {
+    const [open, setOpen] = useState(false);
+
+    useEffect(() => {
+        const timer = setTimeout(() => setOpen(true), STUCK_LOADING_MS);
+        return () => clearTimeout(timer);
+    }, []);
+
+    if (!open) return null;
+
+    const { backend, customServers } = settings.store;
+    const predefined = PREDEFINED_SERVERS.find(s => s.id === backend);
+    const name = predefined?.name ?? customServers.find(s => s.id === backend)?.name ?? "The server";
+
+    return (
+        <div className="vc-endpoint-stuck-backdrop">
+            <div className="vc-endpoint-stuck-notice" role="alertdialog" aria-label="Still connecting">
+                <Text variant="heading-lg/semibold" color="text-strong">Still connecting?</Text>
+                <Text variant="text-md/normal" color="text-default">This is taking longer than usual. If the server or your connection is just slow, you can ignore this. Otherwise, some likely reasons:</Text>
+                <ul className="vc-endpoint-stuck-reasons">
+                    <li><Text variant="text-md/normal" color="text-default">{name} might be down right now.</Text></li>
+                    {predefined ? null : <li><Text variant="text-md/normal" color="text-default">This custom server might not be set up correctly.</Text></li>}
+                    <li><Text variant="text-md/normal" color="text-default">You switched servers without switching to an account from that server.</Text></li>
+                    <li><Text variant="text-md/normal" color="text-default">Your ISP might be blocking it. A VPN can help.</Text></li>
+                </ul>
+                <div className="vc-endpoint-stuck-actions">
+                    <Button size={Button.Sizes.SMALL} look={Button.Looks.OUTLINED} color={Button.Colors.PRIMARY} onClick={() => setOpen(false)}>Close</Button>
+                    <Button size={Button.Sizes.SMALL} onClick={() => { setOpen(false); openSwitchAccountLanding(); }}>Switch Account</Button>
+                </div>
+            </div>
+        </div>
+    );
+}, { noop: true });
+
 const serverWithCodeOfConduct = () => PREDEFINED_SERVERS.find(s => s.id === settings.store.backend && s.codeOfConduct);
 
 const GATEWAY_AUTH_FAILURE = /invalid token|user not found|user disabled|failed to decode token|unsupported token algorithm/i;
@@ -1113,28 +1149,31 @@ export default definePlugin({
     // actual loading screen buttons, pretty self explanatory #lol
     renderLoadingScreenButtons() {
         return (
-            <div className="vc-endpoint-loading-switch-wrapper">
-                <Button
-                    key="change-endpoint-loading-switch-backend"
-                    type="button"
-                    size={Button.Sizes.SMALL}
-                    look={Button.Looks.OUTLINED}
-                    color={Button.Colors.PRIMARY}
-                    onClick={e => this.openBackendMenu(e)}
-                >
-                    Switch Backend
-                </Button>
-                <Button
-                    key="change-endpoint-loading-switch-account"
-                    type="button"
-                    size={Button.Sizes.SMALL}
-                    look={Button.Looks.OUTLINED}
-                    color={Button.Colors.PRIMARY}
-                    onClick={e => this.onSwitchAccountClick(e)}
-                >
-                    Switch Account
-                </Button>
-            </div>
+            <>
+                <StuckLoadingNotice />
+                <div className="vc-endpoint-loading-switch-wrapper">
+                    <Button
+                        key="change-endpoint-loading-switch-backend"
+                        type="button"
+                        size={Button.Sizes.SMALL}
+                        look={Button.Looks.OUTLINED}
+                        color={Button.Colors.PRIMARY}
+                        onClick={e => this.openBackendMenu(e)}
+                    >
+                        Switch Backend
+                    </Button>
+                    <Button
+                        key="change-endpoint-loading-switch-account"
+                        type="button"
+                        size={Button.Sizes.SMALL}
+                        look={Button.Looks.OUTLINED}
+                        color={Button.Colors.PRIMARY}
+                        onClick={e => this.onSwitchAccountClick(e)}
+                    >
+                        Switch Account
+                    </Button>
+                </div>
+            </>
         );
     },
 
