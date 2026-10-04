@@ -162,7 +162,7 @@ export const settings = definePluginSettings({
     },
     ignoreEmailVerification: {
         type: OptionType.BOOLEAN,
-        description: "Treat your account as email verified, so guilds that require a verified email let you chat and the verify email banner goes away. Useful on instances that can't send verification emails.",
+        description: "Treat your account as email and phone verified, so guilds that require verification let you chat and the verify email banner goes away. Useful on instances that can't send verification emails or texts.",
         default: true,
         restartNeeded: true
     },

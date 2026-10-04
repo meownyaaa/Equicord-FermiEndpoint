@@ -1759,6 +1759,14 @@ export default definePlugin({
             }
         },
         {
+            find: 'type:"GUILD_VERIFICATION_CHECK",guildId:',
+            predicate: () => settings.store.ignoreEmailVerification,
+            replacement: {
+                match: /(?<=\i=)\i\.verificationLevel>=\i\.\i\.VERY_HIGH/,
+                replace: "!1"
+            }
+        },
+        {
             find: '"VOICE_STATE_UPDATES",voiceStates:',
             replacement: {
                 match: /null!=(\i)\.member&&(?=\i\(\1\.guild_id,\1\.member\.user,\1\.member\))/g,
