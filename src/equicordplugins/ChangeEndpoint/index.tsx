@@ -289,6 +289,31 @@ function isGatewayUrl(url: string) {
     return host ? url.includes(host) : url.includes("gateway.");
 }
 
+type PayloadShape = { [key: string]: true | PayloadShape; };
+
+const PRESENCE_SHAPE: PayloadShape = { afk: true, status: true, since: true };
+const ACTIVITY_SHAPE: PayloadShape = {
+    name: true, type: true, url: true, timestamps: { start: true, end: true },
+    application_id: true, parent_application_id: true, details: true, details_url: true, state: true, state_url: true,
+    emoji: { name: true, id: true, animated: true },
+    party: { id: true, size: true },
+    assets: { large_image: true, large_text: true, small_image: true, small_text: true },
+    secrets: { join: true, spectate: true, match: true },
+    instance: true, flags: true, id: true, sync_id: true,
+    metadata: { button_urls: true, context_uri: true, album_id: true, artist_ids: true },
+    session_id: true, platform: true, supported_platforms: true, status_display_type: true, buttons: true
+};
+
+function pickKnownKeys(value: Record<string, any>, shape: PayloadShape) {
+    const picked: Record<string, any> = {};
+    for (const [key, rule] of Object.entries(shape)) {
+        if (!(key in value)) continue;
+        const v = value[key];
+        picked[key] = rule === true || v == null || typeof v !== "object" ? v : pickKnownKeys(v, rule);
+    }
+    return picked;
+}
+
 function sanitiseGatewayPayload(data: string) {
     if (!data.includes('"op":3')) return data;
 
@@ -296,30 +321,20 @@ function sanitiseGatewayPayload(data: string) {
         const payload = JSON.parse(data);
         if (payload?.op !== 3 || !Array.isArray(payload.d?.activities)) return data;
 
-        let changed = false;
-        for (const activity of payload.d.activities) {
-            const meta = activity?.metadata;
-            if (meta && !(meta.album_id && meta.artist_ids)) {
-                delete activity.metadata;
-                changed = true;
-            }
+        const activities = payload.d.activities.map((activity: Record<string, any>) => {
+            const picked = pickKnownKeys(activity, ACTIVITY_SHAPE);
+            if (typeof picked.flags === "number") picked.flags = String(picked.flags);
+            return picked;
+        });
+        const sanitised = JSON.stringify({ ...payload, d: { ...pickKnownKeys(payload.d, PRESENCE_SHAPE), activities } });
+        if (sanitised === data) return data;
 
-            if (activity && typeof activity.flags === "number") {
-                activity.flags = String(activity.flags);
-                changed = true;
-            }
-        }
-
-        if (!changed) return data;
-
-        logger.debug("Sanitised a presence update (metadata/flags) to avoid a 4002 close");
-        return JSON.stringify(payload);
+        logger.debug("Sanitised a presence update to the keys Spacebar accepts to avoid a 4002 close");
+        return sanitised;
     } catch {
         return data;
     }
 }
-// metadata stripping still not finished, still get a 4002 in some
-// cases with RPC but mostly functional now
 
 function installGatewaySendSanitiser() {
     if (originalSend) return;
