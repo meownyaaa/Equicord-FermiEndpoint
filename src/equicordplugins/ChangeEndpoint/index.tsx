@@ -1837,8 +1837,8 @@ export default definePlugin({
         {
             find: "username webauthn",
             replacement: {
-                match: /(\i&&\i&&\(0,\i\.jsx\)\("div",\{className:\i\.AX,)children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
-                replace: "$1style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$2,$self.renderSwitchBackendButton()]})"
+                match: /(\i&&\i)&&\(0,(\i)\.jsx\)\("div",\{className:(\i\.\i),children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
+                replace: "(0,$2.jsxs)(\"div\",{className:$3,style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$1&&$4,$self.renderSwitchBackendButton()]})"
             }
         },
         {
