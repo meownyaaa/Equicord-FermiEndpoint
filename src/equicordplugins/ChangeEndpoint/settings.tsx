@@ -166,7 +166,7 @@ export const settings = definePluginSettings({
         // six seveennnnnnnnn (boosts amount to unlock boost paywalled features)
         default: 67,
         restartNeeded: true,
-        isValid: (value: number) => Number.isInteger(value) && value >= 0 || "Enter a whole number of 0 or more."
+        isValid: (value: number) => /^\d+$/.test(String(value)) || "Enter a whole number of 0 or more."
     },
     legacyGuildOrderSync: {
         type: OptionType.BOOLEAN,
