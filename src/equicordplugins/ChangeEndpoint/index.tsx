@@ -421,29 +421,35 @@ let originalPermissionsQuery: Permissions["query"] | null = null;
 
 const SNOWFLAKE_AS_NAME = /^\d{14,22}$/;
 
-// six seveennnnnnnnn (boosts amount to unlock boost paywalled features)
-const MAX_PREMIUM_TIER = 3;
-const MAX_PREMIUM_SUBSCRIPTION_COUNT = 67;
+const BOOST_TIER_THRESHOLDS = [2, 7, 14];
 const BOOST_FEATURES: GuildFeatures[] = [
     "ANIMATED_ICON", "ANIMATED_BANNER", "BANNER", "INVITE_SPLASH", "VANITY_URL",
     "MORE_EMOJI", "MORE_STICKERS", "MORE_SOUNDBOARD", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED"
 ];
 
+function boostPerks() {
+    const count = settings.store.boostCount;
+    const tier = BOOST_TIER_THRESHOLDS.filter(t => count >= t).length;
+    return { count, tier, features: tier === BOOST_TIER_THRESHOLDS.length ? BOOST_FEATURES : [] };
+}
+
 function maxOutGuildPremium(guild: any) {
     if (!guild) return;
+    const { count, tier, features } = boostPerks();
     const properties = guild.properties ?? guild;
-    properties.premium_tier = MAX_PREMIUM_TIER;
-    properties.features = Array.from(new Set([...(properties.features ?? []), ...BOOST_FEATURES]));
-    guild.premium_subscription_count = MAX_PREMIUM_SUBSCRIPTION_COUNT;
+    properties.premium_tier = tier;
+    properties.features = Array.from(new Set([...(properties.features ?? []), ...features]));
+    guild.premium_subscription_count = count;
 }
 
 // guilds that finished loading before this interceptor was installed never
 // pass through it, so they'd stay stuck at tier 0 forever. patch those directly too.
 function maxOutLoadedGuilds() {
+    const { count, tier, features } = boostPerks();
     for (const guild of GuildStore.getGuildsArray()) {
-        guild.premiumTier = MAX_PREMIUM_TIER;
-        guild.premiumSubscriberCount = MAX_PREMIUM_SUBSCRIPTION_COUNT;
-        for (const feature of BOOST_FEATURES) guild.features.add(feature);
+        guild.premiumTier = tier;
+        guild.premiumSubscriberCount = count;
+        for (const feature of features) guild.features.add(feature);
     }
     GuildStore.emitChange();
 }
