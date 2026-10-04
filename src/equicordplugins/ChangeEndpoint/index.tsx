@@ -473,6 +473,11 @@ function installBoostPerkUnlocker() {
     FluxDispatcher.addInterceptor(boostPerkInterceptor);
 }
 
+function emailVerificationInterceptor(event: any) {
+    if ((event.type === "CONNECTION_OPEN" || event.type === "CURRENT_USER_UPDATE") && event.user) event.user.verified = true;
+    return false;
+}
+
 function fixReactionEmoji(emoji: any) {
     if (!emoji || emoji.id || !SNOWFLAKE_AS_NAME.test(emoji.name ?? "")) return;
     // some spacebar backends omit the emoji id on older reactions(unconfirmed) and dump the snowflake into name instead,
@@ -1227,6 +1232,11 @@ export default definePlugin({
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
         FluxDispatcher.addInterceptor(reactionEmojiInterceptor);
+        if (settings.store.ignoreEmailVerification) {
+            const user = UserStore.getCurrentUser();
+            if (user) user.verified = true;
+            FluxDispatcher.addInterceptor(emailVerificationInterceptor);
+        }
         installActivityUnfilter();
 
         SettingsPlugin.customEntries.push({
@@ -1266,6 +1276,7 @@ export default definePlugin({
         uninstallDaveClientConnectGuard();
         removeInterceptor(boostPerkInterceptor);
         removeInterceptor(reactionEmojiInterceptor);
+        removeInterceptor(emailVerificationInterceptor);
         removeInterceptor(goLiveInterceptor);
         uninstallActivityUnfilter();
         removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");

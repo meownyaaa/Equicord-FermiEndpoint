@@ -160,6 +160,12 @@ export const settings = definePluginSettings({
         default: true,
         restartNeeded: true
     },
+    ignoreEmailVerification: {
+        type: OptionType.BOOLEAN,
+        description: "Treat your account as email verified, so guilds that require a verified email let you chat and the verify email banner goes away. Useful on instances that can't send verification emails.",
+        default: true,
+        restartNeeded: true
+    },
     boostCount: {
         type: OptionType.NUMBER,
         description: "How many boosts every guild shows. The boost level follows from it the same way it does on Discord (2, 7 and 14 boosts), and 14 or more unlocks all boost perks.",
