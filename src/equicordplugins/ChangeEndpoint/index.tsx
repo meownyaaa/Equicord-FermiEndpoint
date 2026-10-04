@@ -1106,6 +1106,11 @@ export default definePlugin({
         return <>By creating a {settings.store.guildTerminology ? "guild" : "server"}, you agree to {server.name}'s <strong><MaskedLink href={server.codeOfConduct}>Code of Conduct</MaskedLink></strong>.</>;
     },
 
+    identifyPresence(presence: { status?: string; }) {
+        if (!settings.store.announceOnlineOnConnect || presence.status === "invisible") return presence;
+        return { ...presence, status: "offline" };
+    },
+
     onGatewayClose(code: number, reason?: string) {
         if (code !== 4000 || !GATEWAY_AUTH_FAILURE.test(reason ?? "")) return;
         logger.warn(`Gateway rejected the token (${reason}), opening the account picker`);
@@ -1756,6 +1761,13 @@ export default definePlugin({
             replacement: {
                 match: /_handleClose\((\i),(\i),(\i)\)\{/,
                 replace: "$&$self.onGatewayClose($2,$3);"
+            }
+        },
+        {
+            find: "handleIdentify called",
+            replacement: {
+                match: /(?<=presence:)\i\.getInitialState\(\)/,
+                replace: "$self.identifyPresence($&)"
             }
         },
         {
