@@ -174,7 +174,6 @@ export const settings = definePluginSettings({
     boostCount: {
         type: OptionType.NUMBER,
         description: "How many boosts every guild shows. The boost level follows from it the same way it does on Discord (2, 7 and 14 boosts), and 14 or more unlocks all boost perks.",
-        // six seveennnnnnnnn (boosts amount to unlock boost paywalled features)
         default: 67,
         restartNeeded: true,
         isValid: (value: number) => /^\d+$/.test(String(value)) || "Enter a whole number of 0 or more."
