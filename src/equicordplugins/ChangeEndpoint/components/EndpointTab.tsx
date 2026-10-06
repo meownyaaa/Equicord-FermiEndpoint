@@ -109,7 +109,7 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
                 </>
             ) : (
                 <>
-                    <Paragraph className={Margins.top8}>Each endpoint separately, for instances that don't follow the standard convention. Values come from https://&lt;host&gt;/api/policies/instance/domains.</Paragraph>
+                    <Paragraph className={Margins.top8}>Each endpoint separately, for instances that don't follow the standard convention. Values come from https://&lt;host&gt;/api/policies/instance/domains. API needs a path (e.g. https://&lt;host&gt;/api) otherwise your server will fail to connect.</Paragraph>
                     <div className={Margins.top8}><TextInput value={apiEndpoint} placeholder="API endpoint" onChange={setApiEndpoint} /></div>
                     <div className={Margins.top8}><TextInput value={cdnHost} placeholder="CDN host" onChange={setCdnHost} /></div>
                     <div className={Margins.top8}><TextInput value={gatewayEndpoint} placeholder="Gateway endpoint" onChange={setGatewayEndpoint} /></div>
