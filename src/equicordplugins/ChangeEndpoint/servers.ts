@@ -33,9 +33,9 @@ export const PREDEFINED_SERVERS: PredefinedServer[] = [
         name: "ITChat",
         host: "muc.it-voip.4siwi.net:8099",
         endpoints: {
-            apiEndpoint: "https://muc.it-voip.4siwi.net:8099/api",
+            apiEndpoint: "https://muc.it-voip.4siwi.net:8097/api",
             cdnHost: "https://share.it-voip.4siwi.net:8099",
-            gatewayEndpoint: "wss://proxy.it-voip.4siwi.net:8099"
+            gatewayEndpoint: "wss://proxy.it-voip.4siwi.net:8098"
         }
     }
 ];
