@@ -31,7 +31,7 @@ export const PREDEFINED_SERVERS: PredefinedServer[] = [
     {
         id: "itchat",
         name: "ITChat",
-        host: "muc.it-voip.4siwi.net:8099",
+        host: "muc.it-voip.4siwi.net:8097",
         endpoints: {
             apiEndpoint: "https://muc.it-voip.4siwi.net:8097/api",
             cdnHost: "https://share.it-voip.4siwi.net:8099",
