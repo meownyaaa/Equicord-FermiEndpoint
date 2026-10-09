@@ -183,6 +183,12 @@ export const settings = definePluginSettings({
         default: true,
         restartNeeded: true
     },
+    videoBufferMs: {
+        type: OptionType.SLIDER,
+        description: "Milliseconds of incoming video and screen share to buffer, so resent packets arrive before they're needed. Cuts short freezes on lossy connections, but video plays this far behind voice. 0 leaves it to the client.",
+        markers: [0, 200, 400, 600, 800, 1000],
+        default: 0
+    },
     boostCount: {
         type: OptionType.NUMBER,
         description: "How many boosts every guild shows. The boost level follows from it the same way it does on Discord (2, 7 and 14 boosts), and 14 or more unlocks all boost perks.",

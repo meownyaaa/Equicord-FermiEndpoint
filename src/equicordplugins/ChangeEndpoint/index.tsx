@@ -1270,6 +1270,12 @@ export default definePlugin({
         return added;
     },
 
+    applyVideoBuffer(pc: RTCPeerConnection) {
+        const target = settings.store.videoBufferMs || null;
+        for (const receiver of pc.getReceivers())
+            if (receiver.track.kind === "video") receiver.jitterBufferTarget = target;
+    },
+
     isStreamDeleteHeld(streamKey: string) {
         return heldVoiceState?.streamKey === streamKey;
     },
@@ -1973,6 +1979,13 @@ export default definePlugin({
                     replace: "$self.maxEmojis()||$&"
                 }
             ]
+        },
+        {
+            find: "async setRemoteAnswer(",
+            replacement: {
+                match: /(async setRemoteAnswer\(\i,\i,\i,\i\)\{let (\i)=this\.pc,.{0,120}?try\{await \2\.setRemoteDescription\(\i\))/,
+                replace: "$1;$self.applyVideoBuffer($2)"
+            }
         },
         {
             find: '"SortedVoiceStateStore"',
