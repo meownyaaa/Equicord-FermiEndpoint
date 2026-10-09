@@ -17,7 +17,7 @@ import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState } from "@webpack/common";
+import { ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -982,6 +982,16 @@ function releaseVoiceState() {
     socket.voiceStateUpdate(state);
 }
 
+interface VoiceStateChange {
+    guildId?: string | null;
+    channelId?: string | null;
+    oldChannelId?: string | null;
+}
+
+function setVoiceStartTime(guildId: string, id: string, voiceStartTime?: number) {
+    setTimeout(() => FluxDispatcher.dispatch({ type: "VOICE_CHANNEL_START_TIME_UPDATE", guildId, id, voiceStartTime }));
+}
+
 function AccountSwitcherMenu({ onClose }: { onClose(): void; }) {
     const currentId = AuthenticationStore.getId();
 
@@ -1325,6 +1335,14 @@ export default definePlugin({
 
         STREAM_DELETE({ streamKey }: { streamKey: string; }) {
             if (heldVoiceState?.streamKey === streamKey) releaseVoiceState();
+        },
+
+        VOICE_STATE_UPDATES({ voiceStates }: { voiceStates: VoiceStateChange[]; }) {
+            for (const { guildId, channelId, oldChannelId } of voiceStates) {
+                if (!guildId || channelId === oldChannelId) continue;
+                if (oldChannelId && !Object.keys(VoiceStateStore.getVoiceStatesForChannel(oldChannelId)).length) setVoiceStartTime(guildId, oldChannelId);
+                if (channelId && Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId)).length === 1) setVoiceStartTime(guildId, channelId, Date.now() / 1000);
+            }
         },
 
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
