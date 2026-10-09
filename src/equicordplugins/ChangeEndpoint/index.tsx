@@ -14,10 +14,10 @@ import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import { openModalLazy } from "@utils/modal";
 import definePlugin, { PluginNative } from "@utils/types";
-import type { GuildFeatures, User } from "@vencord/discord-types";
+import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState } from "@webpack/common";
+import { ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -959,6 +959,29 @@ const serverWithCodeOfConduct = () => PREDEFINED_SERVERS.find(s => s.id === sett
 
 const GATEWAY_AUTH_FAILURE = /invalid token|user not found|user disabled|failed to decode token|unsupported token algorithm/i;
 
+const encodeStreamKey: (stream: Stream) => string = findByCodeLazy("Unknown stream type", '.join(":")');
+
+interface VoiceStateArgs {
+    channelId?: string | null;
+}
+
+interface VoiceStateSocket {
+    streamDelete(streamKey: string): void;
+    voiceStateUpdate(state: VoiceStateArgs): void;
+}
+
+let heldVoiceState: { socket: VoiceStateSocket; state: VoiceStateArgs; streamKey: string; timer: ReturnType<typeof setTimeout>; } | null = null;
+let releasedVoiceState: VoiceStateArgs | null = null;
+
+function releaseVoiceState() {
+    if (!heldVoiceState) return;
+    const { socket, state, timer } = heldVoiceState;
+    clearTimeout(timer);
+    heldVoiceState = null;
+    releasedVoiceState = state;
+    socket.voiceStateUpdate(state);
+}
+
 function AccountSwitcherMenu({ onClose }: { onClose(): void; }) {
     const currentId = AuthenticationStore.getId();
 
@@ -1196,6 +1219,22 @@ export default definePlugin({
         return { ...presence, status: "offline" };
     },
 
+    holdVoiceState(socket: VoiceStateSocket, state: VoiceStateArgs) {
+        if (state === releasedVoiceState) return false;
+        if (heldVoiceState) {
+            heldVoiceState.state = state;
+            return true;
+        }
+
+        const stream = ApplicationStreamingStore.getCurrentUserActiveStream();
+        if (!stream || stream.channelId === state.channelId) return false;
+
+        const streamKey = encodeStreamKey(stream);
+        socket.streamDelete(streamKey);
+        heldVoiceState = { socket, state, streamKey, timer: setTimeout(releaseVoiceState, 3000) };
+        return true;
+    },
+
     onGatewayClose(code: number, reason?: string) {
         if (code !== 4000 || !GATEWAY_AUTH_FAILURE.test(reason ?? "")) return;
         logger.warn(`Gateway rejected the token (${reason}), opening the account picker`);
@@ -1278,6 +1317,10 @@ export default definePlugin({
             loadGifProviders();
         },
         CURRENT_USER_UPDATE: saveAccountAvatar,
+
+        STREAM_DELETE({ streamKey }: { streamKey: string; }) {
+            if (heldVoiceState?.streamKey === streamKey) releaseVoiceState();
+        },
 
         UPLOAD_ATTACHMENT_UPDATE_FILE({ channelId, id, draftType, spoiler }: { channelId: string; id: string; draftType: number; spoiler?: boolean; }) {
             if (spoiler == null || draftType !== DraftType.ChannelMessage) return;
@@ -1365,6 +1408,7 @@ export default definePlugin({
         uninstallXHRSanitiser();
         uninstallGatewaySendSanitiser();
         uninstallDaveClientConnectGuard();
+        releaseVoiceState();
         removeInterceptor(boostPerkInterceptor);
         removeInterceptor(reactionEmojiInterceptor);
         removeInterceptor(emailVerificationInterceptor);
@@ -1846,6 +1890,13 @@ export default definePlugin({
             replacement: {
                 match: /_handleClose\((\i),(\i),(\i)\)\{/,
                 replace: "$&$self.onGatewayClose($2,$3);"
+            }
+        },
+        {
+            find: "[WS CLOSED] because of authentication failure, marking as closed.",
+            replacement: {
+                match: /voiceStateUpdate\((\i)\)\{/,
+                replace: "$&if($self.holdVoiceState(this,$1))return;"
             }
         },
         {
