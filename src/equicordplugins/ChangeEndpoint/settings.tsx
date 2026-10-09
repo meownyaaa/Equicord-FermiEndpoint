@@ -171,6 +171,12 @@ export const settings = definePluginSettings({
         description: "Let friends and guild members see you come online. Spacebar only announces you when you connect as offline, so this connects as offline and the server switches you to online. Idle and Do Not Disturb show as online to others until they reload, and invisible stays invisible.",
         default: true
     },
+    disrespectPermissions: {
+        type: OptionType.BOOLEAN,
+        description: "Ignore permissions that Spacebar servers don't enforce. For now this lets you send and forward stickers from other guilds without the Use External Stickers permission.",
+        default: true,
+        restartNeeded: true
+    },
     boostCount: {
         type: OptionType.NUMBER,
         description: "How many boosts every guild shows. The boost level follows from it the same way it does on Discord (2, 7 and 14 boosts), and 14 or more unlocks all boost perks.",

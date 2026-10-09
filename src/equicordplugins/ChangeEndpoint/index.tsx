@@ -15,8 +15,9 @@ import { parseUrl, removeFromArray } from "@utils/misc";
 import { openModalLazy } from "@utils/modal";
 import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, User } from "@vencord/discord-types";
+import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, Text, useEffect, useRef, UserStore, useState } from "@webpack/common";
+import { AuthenticationStore, Avatar, Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -895,6 +896,16 @@ const GifProviderTabs = ErrorBoundary.wrap(function GifProviderTabs() {
     );
 }, { noop: true });
 
+interface ChannelPositionUpdate {
+    id: string;
+    position?: number;
+    parent_id?: string | null;
+    lock_permissions?: boolean;
+}
+
+const VOICE_CHANNEL_TYPES = new Set([ChannelType.GUILD_VOICE, ChannelType.GUILD_STAGE_VOICE]);
+const THREAD_CHANNEL_TYPES = new Set([ChannelType.ANNOUNCEMENT_THREAD, ChannelType.PUBLIC_THREAD, ChannelType.PRIVATE_THREAD]);
+
 function openSwitchAccountLanding() {
     AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
     NavigationRouter.transitionTo("/login");
@@ -1119,6 +1130,44 @@ export default definePlugin({
         const server = serverWithCodeOfConduct();
         if (!server?.codeOfConduct) return null;
         return <>By creating a {settings.store.guildTerminology ? "guild" : "server"}, you agree to {server.name}'s <strong><MaskedLink href={server.codeOfConduct}>Code of Conduct</MaskedLink></strong>.</>;
+    },
+
+    reorderChannelsForSpacebar(guildId: string, updates: ChannelPositionUpdate[]) {
+        const changes = new Map(updates.map(u => [u.id, u]));
+        const channels = Object.values(ChannelStore.getMutableGuildChannelsForGuild(guildId))
+            .filter(c => !THREAD_CHANNEL_TYPES.has(c.type))
+            .map(c => {
+                const change = changes.get(c.id);
+                return {
+                    id: c.id,
+                    type: c.type,
+                    position: change?.position ?? c.position,
+                    parentId: change?.parent_id !== undefined ? change.parent_id : c.parent_id ?? null
+                };
+            });
+        type Entry = typeof channels[number];
+
+        const sorted = (list: Entry[]) => list.sort((a, b) =>
+            Number(VOICE_CHANNEL_TYPES.has(a.type)) - Number(VOICE_CHANNEL_TYPES.has(b.type))
+            || a.position - b.position
+            || SnowflakeUtils.compare(a.id, b.id));
+        const childrenOf = (parentId: string | null) => sorted(channels.filter(c => c.type !== ChannelType.GUILD_CATEGORY && c.parentId === parentId));
+        const order = [
+            ...childrenOf(null),
+            ...sorted(channels.filter(c => c.type === ChannelType.GUILD_CATEGORY)).flatMap(category => [category, ...childrenOf(category.id)])
+        ];
+
+        return order.map((c, position) => ({ id: c.id, position }));
+    },
+
+    async moveChannelParentsForSpacebar(guildId: string, updates: ChannelPositionUpdate[]) {
+        const moved = updates.filter(u => u.parent_id !== undefined && (u.lock_permissions || u.parent_id !== (ChannelStore.getChannel(u.id)?.parent_id ?? null)));
+        if (!moved.length) return;
+
+        await RestAPI.patch({
+            url: Constants.Endpoints.GUILD_CHANNELS(guildId),
+            body: moved.map(({ id, parent_id, lock_permissions }) => ({ id, parent_id, lock_permissions }))
+        });
     },
 
     identifyPresence(presence: { status?: string; }) {
@@ -1613,11 +1662,10 @@ export default definePlugin({
             }
         },
         {
-            find: "\"Microsoft Edge\"===",
+            find: '"Node.js"===',
             replacement: {
-                match: /"Chrome"===(\w+)\(\)\.name\|\|"Safari"===\w+\(\)\.name\|\|"Firefox"===\w+\(\)\.name&&(\w+)>=80\|\|"Opera"===\w+\(\)\.name\|\|"Microsoft Edge"===\w+\(\)\.name/,
-                replace: (match: string, fn: string, ver: string) =>
-                    `(${match}||"Electron"===${fn}().name&&${ver}>=1)`
+                match: /"Chrome"===(\i)\(\)\.name\|\|"Safari"===\i\(\)\.name\|\|"Firefox"===\i\(\)\.name&&(\i)>=80\|\|"Opera"===\i\(\)\.name\|\|"Microsoft Edge"===\i\(\)\.name/,
+                replace: '($&||"Electron"===$1().name&&$2>=1)'
             }
         },
         /* {
@@ -1777,6 +1825,35 @@ export default definePlugin({
                 match: /_handleClose\((\i),(\i),(\i)\)\{/,
                 replace: "$&$self.onGatewayClose($2,$3);"
             }
+        },
+        {
+            find: "USE_EXTERNAL_STICKERS,user:",
+            predicate: () => settings.store.disrespectPermissions,
+            replacement: {
+                match: /\i\.\i\(\{permission:\i\.\i\.USE_EXTERNAL_STICKERS,user:\i,context:\i\}\)/,
+                replace: "!0"
+            }
+        },
+        {
+            find: '"getDestinationIsUnavailable"',
+            predicate: () => settings.store.disrespectPermissions,
+            replacement: {
+                match: /!\i\.\i\.can\(\i\.\i\.USE_EXTERNAL_STICKERS,\i\)/,
+                replace: "!1"
+            }
+        },
+        {
+            find: "async batchChannelUpdate(",
+            replacement: [
+                {
+                    match: /(?<=batchChannelUpdate\((\i),(\i)\)\{let \i=await \i\.\i\.patch\(\{url:\i\.\i\.GUILD_CHANNELS\(\i\),body:)\2(?=,)/,
+                    replace: "$self.reorderChannelsForSpacebar($1,$2)"
+                },
+                {
+                    match: /(?<=async batchChannelUpdate\((\i),(\i)\)\{)/,
+                    replace: "await $self.moveChannelParentsForSpacebar($1,$2);"
+                }
+            ]
         },
         {
             find: "handleIdentify called",
