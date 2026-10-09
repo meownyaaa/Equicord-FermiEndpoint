@@ -1226,13 +1226,18 @@ export default definePlugin({
             return true;
         }
 
-        const stream = ApplicationStreamingStore.getCurrentUserActiveStream();
-        if (!stream || stream.channelId === state.channelId) return false;
+        const userId = UserStore.getCurrentUser().id;
+        const stream = ApplicationStreamingStore.getAllActiveStreams().find(s => s.ownerId === userId && s.channelId !== state.channelId);
+        if (!stream) return false;
 
         const streamKey = encodeStreamKey(stream);
         socket.streamDelete(streamKey);
         heldVoiceState = { socket, state, streamKey, timer: setTimeout(releaseVoiceState, 3000) };
         return true;
+    },
+
+    isStreamDeleteHeld(streamKey: string) {
+        return heldVoiceState?.streamKey === streamKey;
     },
 
     onGatewayClose(code: number, reason?: string) {
@@ -1894,10 +1899,16 @@ export default definePlugin({
         },
         {
             find: "[WS CLOSED] because of authentication failure, marking as closed.",
-            replacement: {
-                match: /voiceStateUpdate\((\i)\)\{/,
-                replace: "$&if($self.holdVoiceState(this,$1))return;"
-            }
+            replacement: [
+                {
+                    match: /voiceStateUpdate\((\i)\)\{/,
+                    replace: "$&if($self.holdVoiceState(this,$1))return;"
+                },
+                {
+                    match: /streamDelete\((\i)\)\{/,
+                    replace: "$&if($self.isStreamDeleteHeld($1))return;"
+                }
+            ]
         },
         {
             find: "additionalEmojiSlots??0)",
