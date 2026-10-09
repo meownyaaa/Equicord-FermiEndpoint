@@ -443,12 +443,14 @@ const BOOST_FEATURES: GuildFeatures[] = [
     "MORE_EMOJI", "MORE_STICKERS", "MORE_SOUNDBOARD", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED"
 ];
 
-const instanceLimits = { maxEmojis: 2000, maxStickers: 500 };
+const instanceLimits = { maxEmojis: 2000, maxStickers: 500, maxAttachmentSize: 0, maxAttachments: 10 };
 
 async function loadInstanceLimits() {
     const { body } = await RestAPI.get({ url: "/policies/instance/limits" });
     instanceLimits.maxEmojis = body?.guild?.maxEmojis ?? instanceLimits.maxEmojis;
     instanceLimits.maxStickers = body?.guild?.maxStickers ?? instanceLimits.maxStickers;
+    instanceLimits.maxAttachmentSize = body?.message?.maxAttachmentSize ?? instanceLimits.maxAttachmentSize;
+    instanceLimits.maxAttachments = body?.message?.maxAttachments ?? instanceLimits.maxAttachments;
 }
 
 function boostPerks() {
@@ -1219,6 +1221,14 @@ export default definePlugin({
         return instanceLimits.maxStickers;
     },
 
+    maxAttachmentSize() {
+        return instanceLimits.maxAttachmentSize;
+    },
+
+    maxTotalAttachmentSize() {
+        return instanceLimits.maxAttachmentSize * instanceLimits.maxAttachments;
+    },
+
     stickerTierSlots(tier: number, slotsPerTier: Record<number, number>) {
         if (tier !== BOOST_TIER_THRESHOLDS.length) return slotsPerTier[tier];
         return instanceLimits.maxStickers - slotsPerTier[0] - slotsPerTier[1] - slotsPerTier[2];
@@ -1944,6 +1954,30 @@ export default definePlugin({
                     replace: "$self.maxEmojis()||$&"
                 }
             ]
+        },
+        {
+            find: 'location:"getUserMaxFileSize"',
+            predicate: () => settings.store.serverAttachmentLimit,
+            replacement: {
+                match: /function \i\(\i\)\{(?=if\(null==\i\)return \i\.\i;let \i=\i\.\i\.getPremiumTypeOverride\(\))/,
+                replace: "$&if($self.maxAttachmentSize())return $self.maxAttachmentSize();"
+            }
+        },
+        {
+            find: 'location:"uploadSumTooLarge"',
+            predicate: () => settings.store.serverAttachmentLimit,
+            replacement: {
+                match: /function \i\(\i\)\{(?=let \i=\i\.default\.getCurrentUser\(\),\i=\i\.\i\.getUserMaxFileSize\(\i\))/,
+                replace: "$&if($self.maxAttachmentSize())return $self.maxAttachmentSize();"
+            }
+        },
+        {
+            find: "enabled?0x40000000:524288e3",
+            predicate: () => settings.store.serverAttachmentLimit,
+            replacement: {
+                match: /function \i\(\i\)\{(?=let\{location:\i\}=\i;return\(0,\i\.\i\)\(\{location:\i\}\)\.enabled\?0x40000000:524288e3)/,
+                replace: "$&if($self.maxTotalAttachmentSize())return $self.maxTotalAttachmentSize();"
+            }
         },
         {
             find: "USE_EXTERNAL_STICKERS,user:",

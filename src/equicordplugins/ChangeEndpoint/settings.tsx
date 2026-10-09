@@ -177,6 +177,12 @@ export const settings = definePluginSettings({
         default: true,
         restartNeeded: true
     },
+    serverAttachmentLimit: {
+        type: OptionType.BOOLEAN,
+        description: "Use the server's max attachment size instead of the size Discord hardcodes for your Nitro tier.",
+        default: true,
+        restartNeeded: true
+    },
     boostCount: {
         type: OptionType.NUMBER,
         description: "How many boosts every guild shows. The boost level follows from it the same way it does on Discord (2, 7 and 14 boosts), and 14 or more unlocks all boost perks.",
