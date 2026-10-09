@@ -12,8 +12,8 @@ import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import type { Guild } from "@vencord/discord-types";
 import { findComponentByCodeLazy } from "@webpack";
-import { Alerts, Constants, FluxDispatcher, RestAPI, showToast, UserStore } from "@webpack/common";
-import type { ReactElement } from "react";
+import { Alerts, Constants, FluxDispatcher, PermissionsBits, PermissionStore, RestAPI, showToast, UserStore, useStateFromStores } from "@webpack/common";
+import type { ComponentType } from "react";
 
 const logger = new Logger("MassStickerUpload");
 
@@ -82,6 +82,11 @@ function confirmUpload(guild: Guild, dropped: File[]) {
     });
 }
 
+interface StickerPageProps {
+    Page: ComponentType<Record<string, unknown>>;
+    guild: Guild;
+}
+
 const StickerDropZone = ErrorBoundary.wrap(({ guild }: { guild: Guild; }) => (
     <UploadArea
         className="vc-mass-sticker-upload-area"
@@ -91,6 +96,18 @@ const StickerDropZone = ErrorBoundary.wrap(({ guild }: { guild: Guild; }) => (
         onDrop={files => confirmUpload(guild, [...files])}
     />
 ), { noop: true });
+
+const StickerPage = ErrorBoundary.wrap(({ Page, guild, ...props }: StickerPageProps) => {
+    const canUpload = useStateFromStores([PermissionStore], () =>
+        PermissionStore.can(PermissionsBits.CREATE_GUILD_EXPRESSIONS, guild) || PermissionStore.can(PermissionsBits.MANAGE_GUILD_EXPRESSIONS, guild));
+
+    return (
+        <>
+            {canUpload ? <StickerDropZone guild={guild} /> : null}
+            <Page {...props} />
+        </>
+    );
+});
 
 export default definePlugin({
     name: "MassStickerUpload",
@@ -102,18 +119,11 @@ export default definePlugin({
         {
             find: /CREATE_STICKER_MODAL,location:\i\}\),\(\i=>\{let\{guildId:\i\}=\i;/,
             replacement: {
-                match: /(?<=canCreateExpressions:(\i)\}=\(0,\i\.\i\)\((\i)\);return)\(0,\i\.jsx\)\(\i\.\$,\{variant:"primary".{0,500}?CREATE_STICKER_MODAL.{0,400}?disabled:!\1\}\)/,
-                replace: " $self.renderUploadButton($2,$1,$&)"
+                match: /(?<=return\(0,\i\.jsx\)\()(\i),\{(?=tiers:\i,renderTier:function)/,
+                replace: "$self.StickerPage,{Page:$1,guild:arguments[0].guild,"
             }
         }
     ],
 
-    renderUploadButton(guild: Guild, canCreate: boolean, button: ReactElement) {
-        return (
-            <>
-                {canCreate ? <StickerDropZone guild={guild} /> : null}
-                {button}
-            </>
-        );
-    }
+    StickerPage
 });
