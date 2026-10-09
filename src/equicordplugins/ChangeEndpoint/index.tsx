@@ -58,6 +58,7 @@ const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal"
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
 const UploadManager = findByPropsLazy("clearAll", "addFile");
 const UploadAttachmentStore = findByPropsLazy("getUploadCount");
+const GuildActions: { requestMembersById(guildId: string, userIds: string[], presences: boolean): void; } = findByPropsLazy("requestMembersById", "banUser");
 // fieldset wrapper used by every group in channel settings > overview (name, slowmode, content visibility...)
 const SettingsFieldset = findComponentByCodeLazy("tag:\"legend\"");
 
@@ -990,6 +991,12 @@ interface VoiceStateChange {
     oldChannelId?: string | null;
 }
 
+interface SortedVoiceStates {
+    guildId: string;
+    _voiceStates: { get(userId: string): unknown; };
+    updateVoiceState(userId: string): boolean;
+}
+
 function setVoiceStartTime(guildId: string, id: string, voiceStartTime?: number) {
     setTimeout(() => FluxDispatcher.dispatch({ type: "VOICE_CHANNEL_START_TIME_UPDATE", guildId, id, voiceStartTime }));
 }
@@ -1256,6 +1263,13 @@ export default definePlugin({
         return true;
     },
 
+    addMissingVoiceStates(sorted: SortedVoiceStates) {
+        let added = false;
+        for (const userId of Object.keys(VoiceStateStore.getVoiceStates(sorted.guildId)))
+            if (sorted._voiceStates.get(userId) == null && UserStore.getUser(userId)) added = sorted.updateVoiceState(userId) || added;
+        return added;
+    },
+
     isStreamDeleteHeld(streamKey: string) {
         return heldVoiceState?.streamKey === streamKey;
     },
@@ -1347,7 +1361,12 @@ export default definePlugin({
             if (heldVoiceState?.streamKey === streamKey) releaseVoiceState();
         },
 
-        VOICE_STATE_UPDATES({ voiceStates }: { voiceStates: VoiceStateChange[]; }) {
+        VOICE_STATE_UPDATES({ voiceStates }: { voiceStates: (VoiceStateChange & { userId: string; })[]; }) {
+            const missingUsers: Record<string, string[]> = {};
+            for (const { guildId, channelId, userId } of voiceStates)
+                if (guildId && channelId && !UserStore.getUser(userId)) (missingUsers[guildId] ??= []).push(userId);
+            for (const [guildId, userIds] of Object.entries(missingUsers)) GuildActions.requestMembersById(guildId, userIds, false);
+
             for (const { guildId, channelId, oldChannelId } of voiceStates) {
                 if (!guildId || channelId === oldChannelId) continue;
                 if (oldChannelId && !Object.keys(VoiceStateStore.getVoiceStatesForChannel(oldChannelId)).length) setVoiceStartTime(guildId, oldChannelId);
@@ -1954,6 +1973,13 @@ export default definePlugin({
                     replace: "$self.maxEmojis()||$&"
                 }
             ]
+        },
+        {
+            find: '"SortedVoiceStateStore"',
+            replacement: {
+                match: /updateUsers\(\)\{return (null==this\._pending&&this\._voiceStates\.values\(\)\.reduce\(.{0,200}?,!1\))\}/,
+                replace: "updateUsers(){return $self.addMissingVoiceStates(this)|($1)}"
+            }
         },
         {
             find: 'location:"getUserMaxFileSize"',
