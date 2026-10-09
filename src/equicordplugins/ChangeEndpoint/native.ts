@@ -24,20 +24,25 @@ ResponseHeaderPatchers.push(({ url }, headers) => {
 
 let handlerRegistered = false;
 let pendingSourceName: string | null = null;
+let pendingSourceId: string | null = null;
+let pendingSystemAudio = false;
 
-export function setPendingScreenShareSource(_event: IpcMainInvokeEvent, name: unknown) {
+export function setPendingScreenShareSource(_event: IpcMainInvokeEvent, name: unknown, id: unknown, systemAudio: unknown) {
     pendingSourceName = typeof name === "string" && name.length > 0 && name.length < 256 ? name : null;
+    pendingSourceId = typeof id === "string" && /^(window|screen):\d+:\d+$/.test(id) ? id : null;
+    pendingSystemAudio = systemAudio === true;
 }
 
 export function registerDisplayMediaHandler(_event: IpcMainInvokeEvent) {
     if (handlerRegistered) return;
     handlerRegistered = true;
 
-    session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
         desktopCapturer.getSources({ types: ["window", "screen"] })
             .then(sources => {
-                const video = sources.find(s => s.name === pendingSourceName) ?? sources[0];
-                callback(video ? { video } : {});
+                const video = sources.find(s => s.id === pendingSourceId) ?? sources.find(s => s.name === pendingSourceName) ?? sources[0];
+                if (!video) return callback({});
+                callback(request.audioRequested && pendingSystemAudio ? { video, audio: "loopback" } : { video });
             })
             .catch(() => callback({}));
     });

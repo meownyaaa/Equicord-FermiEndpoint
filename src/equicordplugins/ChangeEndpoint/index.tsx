@@ -17,7 +17,7 @@ import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -47,6 +47,8 @@ interface GoLiveEngine {
     getDesktopSource(quality: { width: number; height: number; }, wantsAudio: boolean): Promise<string>;
     // null clears the current desktop source for that context
     setGoLiveSource(source: { desktopDescription: { id: string; }; } | null, context: "stream"): void;
+    findConnection(context: "stream"): unknown;
+    desktopInputPool: { get(id: string): unknown; release(input: unknown): void; };
 }
 const GoLiveMediaEngineStore = findStoreLazy("MediaEngineStore") as { getMediaEngine(): GoLiveEngine; };
 import { captureConnectedBackend, connectedBackend, getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
@@ -402,12 +404,20 @@ function uninstallActivityUnfilter() {
     originalGetActivities = null;
 }
 
+let pendingGoLiveSourceId: string | null = null;
+
+function applyPendingGoLiveSource() {
+    const engine = GoLiveMediaEngineStore.getMediaEngine();
+    if (!pendingGoLiveSourceId || engine.findConnection("stream") == null) return;
+    engine.setGoLiveSource({ desktopDescription: { id: pendingGoLiveSourceId } }, "stream");
+    pendingGoLiveSourceId = null;
+}
+
 async function startWebEngineGoLiveSource(sourceId: string, sourceName?: string) {
     try {
-        await Native.setPendingScreenShareSource(sourceName ?? null);
-        const engine = GoLiveMediaEngineStore.getMediaEngine();
-        const desktopSourceId = await engine.getDesktopSource({ width: 1920, height: 1080 }, true);
-        engine.setGoLiveSource({ desktopDescription: { id: desktopSourceId } }, "stream");
+        await Native.setPendingScreenShareSource(sourceName ?? null, sourceId, ApplicationStreamingSettingsStore.getState().soundshareEnabled);
+        pendingGoLiveSourceId = await GoLiveMediaEngineStore.getMediaEngine().getDesktopSource({ width: 1920, height: 1080 }, true);
+        applyPendingGoLiveSource();
     } catch (e) {
         logger.error("Failed to start web engine screen share source", e);
     }
@@ -415,17 +425,22 @@ async function startWebEngineGoLiveSource(sourceId: string, sourceName?: string)
 
 function stopWebEngineGoLiveSource() {
     try {
-        GoLiveMediaEngineStore.getMediaEngine().setGoLiveSource(null, "stream");
+        const engine = GoLiveMediaEngineStore.getMediaEngine();
+        if (pendingGoLiveSourceId) engine.desktopInputPool.release(engine.desktopInputPool.get(pendingGoLiveSourceId));
+        pendingGoLiveSourceId = null;
+        engine.setGoLiveSource(null, "stream");
     } catch (e) {
         logger.error("Failed to stop web engine screen share source", e);
     }
 }
 
-function goLiveInterceptor(payload: { type: string; sourceId?: string; sourceName?: string; }) {
+function goLiveInterceptor(payload: { type: string; sourceId?: string; sourceName?: string; context?: string; }) {
     if (payload.type === "STREAM_START" && payload.sourceId != null) {
         startWebEngineGoLiveSource(payload.sourceId, payload.sourceName);
     } else if (payload.type === "STREAM_STOP") {
         stopWebEngineGoLiveSource();
+    } else if (payload.type === "RTC_CONNECTION_STATE" && payload.context === "stream") {
+        applyPendingGoLiveSource();
     }
     return false;
 }
@@ -960,7 +975,9 @@ const StuckLoadingNotice = ErrorBoundary.wrap(() => {
 
 const serverWithCodeOfConduct = () => PREDEFINED_SERVERS.find(s => s.id === settings.store.backend && s.codeOfConduct);
 
-const GATEWAY_AUTH_FAILURE = /invalid token|user not found|user disabled|failed to decode token|unsupported token algorithm/i;
+const TENOR_MEDIA1_URL = /https:\/\/media1\.tenor\.com\/m\/([\w-]+\/[^\s/?#]+)/g;
+
+const GATEWAY_AUTH_FAILURE =/invalid token|user not found|user disabled|failed to decode token|unsupported token algorithm/i;
 
 const encodeStreamKey: (stream: Stream) => string = findByCodeLazy("Unknown stream type", '.join(":")');
 
@@ -1270,6 +1287,12 @@ export default definePlugin({
         return added;
     },
 
+    withVideoMinBitrate(answer: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
+        const min = settings.store.videoMinBitrate;
+        if (!min || !answer.sdp) return answer;
+        return { type: answer.type, sdp: answer.sdp.replace(/x-google-max-bitrate=(\d+)/g, (_, max) => `x-google-max-bitrate=${Math.max(min, Number(max))};x-google-min-bitrate=${min}`) };
+    },
+
     applyVideoBuffer(pc: RTCPeerConnection) {
         const target = settings.store.videoBufferMs || null;
         for (const receiver of pc.getReceivers())
@@ -1354,6 +1377,10 @@ export default definePlugin({
                 </div>
             </>
         );
+    },
+
+    onBeforeMessageSend(_, msg) {
+        msg.content = msg.content.replace(TENOR_MEDIA1_URL, "https://media.tenor.com/$1");
     },
 
     flux: {
@@ -1778,11 +1805,10 @@ export default definePlugin({
             }
         },
         {
-            find: "].find(e=>E(e).supported())",
+            find: ".WEBRTC].find(e=>",
             replacement: {
-                match: /\[(\w+\.\w+\.NATIVE),(\w+\.\w+\.WEBRTC)\]\.find\(e=>\w+\(e\)\.supported\(\)\)/,
-                replace: (match: string, native: string, webrtc: string) =>
-                    match.replace(`[${native},${webrtc}]`, `[${webrtc},${native}]`)
+                match: /\[(\i\.\i\.NATIVE),(\i\.\i\.WEBRTC)\](?=\.find\(\i=>\i\(\i\)\.supported\(\)\))/,
+                replace: "[$2,$1]"
             }
         },
         {
@@ -1981,10 +2007,17 @@ export default definePlugin({
             ]
         },
         {
+            find: "VideoInput: Already destroyed",
+            replacement: {
+                match: /(?<=\i\.some\(\i=>\i\.id===this\.sourceId\)&&\()(\i)\.deviceId=this\.sourceId(?=\))/,
+                replace: "$1.deviceId={exact:this.sourceId}"
+            }
+        },
+        {
             find: "async setRemoteAnswer(",
             replacement: {
-                match: /(async setRemoteAnswer\(\i,\i,\i,\i\)\{let (\i)=this\.pc,.{0,120}?try\{await \2\.setRemoteDescription\(\i\))/,
-                replace: "$1;$self.applyVideoBuffer($2)"
+                match: /(async setRemoteAnswer\(\i,\i,\i,\i\)\{let (\i)=this\.pc,.{0,120}?try\{await \2\.setRemoteDescription\()(\i)\)/,
+                replace: "$1$self.withVideoMinBitrate($3));$self.applyVideoBuffer($2)"
             }
         },
         {

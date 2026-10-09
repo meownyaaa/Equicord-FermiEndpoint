@@ -189,6 +189,15 @@ export const settings = definePluginSettings({
         markers: [0, 200, 400, 600, 800, 1000],
         default: 0
     },
+    videoMinBitrate: {
+        type: OptionType.SLIDER,
+        description: "Lowest bitrate in kbps your camera and screen share may drop to. Some Spacebar voice servers never report bandwidth back, which leaves video stuck around 100 kbps. 0 leaves it to the client.",
+        markers: [0, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000],
+        default: 750,
+        componentProps: {
+            onMarkerRender: (value: number) => value === 0 ? "Off" : value < 1000 ? value : `${value / 1000}M`
+        }
+    },
     boostCount: {
         type: OptionType.NUMBER,
         description: "How many boosts every guild shows. The boost level follows from it the same way it does on Discord (2, 7 and 14 boosts), and 14 or more unlocks all boost perks.",
