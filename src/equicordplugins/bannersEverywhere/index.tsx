@@ -11,7 +11,7 @@ import usrbg from "@plugins/usrbg";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { User } from "@vencord/discord-types";
-import { UserProfileStore } from "@webpack/common";
+import { IconUtils, UserProfileStore } from "@webpack/common";
 
 import style from "./style.css?managed";
 
@@ -138,7 +138,7 @@ export default definePlugin({
         }
         const userProfile = UserProfileStore.getUserProfile(userId);
         if (userProfile?.banner) {
-            this.data[userId] = `https://cdn.discordapp.com/banners/${userId}/${userProfile.banner}.${userProfile.banner.startsWith("a_") ? "gif" : "png"}`;
+            this.data[userId] = IconUtils.getUserBannerURL({ id: userId, banner: userProfile.banner, canAnimate: true, size: 480 });
             DataStore.set(DATASTORE_KEY, this.data);
         }
         return this.data[userId];
