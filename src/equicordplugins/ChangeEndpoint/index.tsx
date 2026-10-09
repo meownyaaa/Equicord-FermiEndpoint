@@ -443,6 +443,14 @@ const BOOST_FEATURES: GuildFeatures[] = [
     "MORE_EMOJI", "MORE_STICKERS", "MORE_SOUNDBOARD", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED"
 ];
 
+const instanceLimits = { maxEmojis: 2000, maxStickers: 500 };
+
+async function loadInstanceLimits() {
+    const { body } = await RestAPI.get({ url: "/policies/instance/limits" });
+    instanceLimits.maxEmojis = body?.guild?.maxEmojis ?? instanceLimits.maxEmojis;
+    instanceLimits.maxStickers = body?.guild?.maxStickers ?? instanceLimits.maxStickers;
+}
+
 function boostPerks() {
     const count = settings.store.boostCount;
     const tier = BOOST_TIER_THRESHOLDS.filter(t => count >= t).length;
@@ -1170,6 +1178,19 @@ export default definePlugin({
         });
     },
 
+    maxEmojis() {
+        return instanceLimits.maxEmojis;
+    },
+
+    maxStickers() {
+        return instanceLimits.maxStickers;
+    },
+
+    stickerTierSlots(tier: number, slotsPerTier: Record<number, number>) {
+        if (tier !== BOOST_TIER_THRESHOLDS.length) return slotsPerTier[tier];
+        return instanceLimits.maxStickers - slotsPerTier[0] - slotsPerTier[1] - slotsPerTier[2];
+    },
+
     identifyPresence(presence: { status?: string; }) {
         if (!settings.store.announceOnlineOnConnect || presence.status === "invisible") return presence;
         return { ...presence, status: "offline" };
@@ -1298,6 +1319,7 @@ export default definePlugin({
         installFetchSanitiser();
         installXHRSanitiser();
         installBoostPerkUnlocker();
+        loadInstanceLimits().catch(e => logger.warn("Couldn't load instance limits, using Spacebar's defaults", e));
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
         FluxDispatcher.addInterceptor(reactionEmojiInterceptor);
@@ -1825,6 +1847,23 @@ export default definePlugin({
                 match: /_handleClose\((\i),(\i),(\i)\)\{/,
                 replace: "$&$self.onGatewayClose($2,$3);"
             }
+        },
+        {
+            find: "additionalEmojiSlots??0)",
+            replacement: [
+                {
+                    match: /(?<=function \i\((\i),\i\)\{return )(?=null!=\i&&\i\.features\.has\(\i\.\i\.MORE_STICKERS\)&&\1===(\i\.\i\.TIER_3)\?)/,
+                    replace: "$1===$2&&$self.maxStickers()?$self.maxStickers():"
+                },
+                {
+                    match: /(?<=function \i\((\i)\)\{return )(\i)\.(\i)\[\1\](?=\}function \i\(\i\)\{if\(\i===\i\.\i\.NONE\)return \2\.)/,
+                    replace: "$self.stickerTierSlots($1,$2.$3)"
+                },
+                {
+                    match: /(?<=MORE_EMOJI\)\?)\i\.EMOJI_MAX_SLOTS_MORE/,
+                    replace: "$self.maxEmojis()||$&"
+                }
+            ]
         },
         {
             find: "USE_EXTERNAL_STICKERS,user:",
