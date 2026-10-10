@@ -287,6 +287,12 @@ function stopDMUnreadPoll() {
 
 let originalSend: typeof WebSocket.prototype.send | null = null;
 
+interface VoiceSocket {
+    video(audioSsrc: number, videoSsrc: number, rtxSsrc: number, streams: unknown): void;
+}
+
+const republishedSockets = new WeakSet<VoiceSocket>();
+
 function isGatewayUrl(url: string) {
     const gateway = getGatewayEndpoint();
     const host = gateway && parseUrl(gateway)?.host;
@@ -1293,6 +1299,16 @@ export default definePlugin({
         return { type: answer.type, sdp: answer.sdp.replace(/x-google-max-bitrate=(\d+)/g, (_, max) => `x-google-max-bitrate=${Math.max(min, Number(max))};x-google-min-bitrate=${min}`) };
     },
 
+    republishAudio(socket: VoiceSocket, args: Parameters<VoiceSocket["video"]>) {
+        const [audioSsrc, videoSsrc, rtxSsrc, streams] = args;
+        if (!audioSsrc || republishedSockets.has(socket)) return;
+        republishedSockets.add(socket);
+        setTimeout(() => {
+            socket.video(0, videoSsrc, rtxSsrc, streams);
+            setTimeout(() => socket.video(audioSsrc, videoSsrc, rtxSsrc, streams), 1500);
+        }, 2000);
+    },
+
     applyVideoBuffer(pc: RTCPeerConnection) {
         const target = settings.store.videoBufferMs || null;
         for (const receiver of pc.getReceivers())
@@ -2011,6 +2027,14 @@ export default definePlugin({
             replacement: {
                 match: /(?<=\i\.some\(\i=>\i\.id===this\.sourceId\)&&\()(\i)\.deviceId=this\.sourceId(?=\))/,
                 replace: "$1.deviceId={exact:this.sourceId}"
+            }
+        },
+        {
+            find: "this.send(12,{audio_ssrc:",
+            predicate: () => getCdnHost() != null,
+            replacement: {
+                match: /video\(\i,\i,\i,\i\)\{(?=this\.send\(12,)/,
+                replace: "$&$self.republishAudio(this,arguments);"
             }
         },
         {
