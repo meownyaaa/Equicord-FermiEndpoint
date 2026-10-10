@@ -481,10 +481,32 @@ function boostPerks() {
     return { count, tier, features: tier === BOOST_TIER_THRESHOLDS.length ? BOOST_FEATURES : [] };
 }
 
+const realGuildFeatures = new Map<string, string[]>();
+
+function stripSpoofedFeatures(guildId: string, body: string) {
+    if (!body.includes('"features"')) return body;
+    try {
+        const payload = JSON.parse(body);
+        if (!Array.isArray(payload.features)) return body;
+        const real = realGuildFeatures.get(guildId);
+        if (real) {
+            const spoofed = new Set<string>(boostPerks().features.filter(f => !real.includes(f)));
+            payload.features = payload.features.filter((f: string) => !spoofed.has(f));
+        } else {
+            delete payload.features;
+        }
+        return JSON.stringify(payload);
+    } catch {
+        return body;
+    }
+}
+
 function maxOutGuildPremium(guild: any) {
     if (!guild) return;
     const { count, tier, features } = boostPerks();
     const properties = guild.properties ?? guild;
+    const id = guild.id ?? properties.id;
+    if (id && Array.isArray(properties.features)) realGuildFeatures.set(id, [...properties.features]);
     properties.premium_tier = tier;
     properties.features = Array.from(new Set([...(properties.features ?? []), ...features]));
     guild.premium_subscription_count = count;
@@ -554,6 +576,7 @@ const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 // discord sends guild profile (server tag) reads/writes to /guilds/{id}/profile,
 // but spacebar never grew that route - it just uses /guilds/{id} for everything
 const GUILD_PROFILE_URL_RE = /(\/guilds\/\d+)\/profile$/;
+const GUILD_URL_RE = /\/guilds\/(\d+)$/;
 // profile-only fields the plain guild route doesn't know about, spacebar chokes on these.
 // description is NOT one of these - GuildUpdateSchema on /guilds/{id} supports it directly.
 const GUILD_PROFILE_ONLY_KEYS = ["brand_color_primary", "traits", "game_application_ids", "visibility"];
@@ -644,8 +667,11 @@ function installFetchSanitiser() {
         }
 
         if (init && (init.method === "POST" || init.method === "PATCH") && typeof init.body === "string") {
+            const guildId = init.method === "PATCH" && pathname.match(GUILD_URL_RE)?.[1];
             if (MESSAGE_URL_RE.test(pathname)) {
                 init = { ...init, body: stripIsSpoiler(init.body) };
+            } else if (guildId) {
+                init = { ...init, body: stripSpoofedFeatures(guildId, init.body) };
             }
         }
         return OriginalFetch(input, init);
@@ -661,6 +687,7 @@ function uninstallFetchSanitiser() {
 let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
 let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
 const flaggedGuildProfileRequests = new WeakSet<XMLHttpRequest>();
+const guildEditRequests = new WeakMap<XMLHttpRequest, string>();
 
 function requireNativeGetter(descriptor: PropertyDescriptor | undefined): () => any {
     if (!descriptor?.get) throw new Error("expected a native accessor getter");
@@ -705,6 +732,9 @@ function installXHRSanitiser() {
             installGuildProfileResponseExpander(this);
         }
 
+        const guildId = method.toUpperCase() === "PATCH" && pathname.match(GUILD_URL_RE)?.[1];
+        if (guildId) guildEditRequests.set(this, guildId);
+
         const gifProvider = GIF_API_RE.test(pathname) && currentGifProvider();
         if (gifProvider) {
             const withProvider = new URL(urlStr, location.origin);
@@ -720,6 +750,11 @@ function installXHRSanitiser() {
         if (flaggedGuildProfileRequests.has(this)) {
             flaggedGuildProfileRequests.delete(this);
             if (typeof body === "string") body = stripGuildProfileOnlyFields(body);
+        }
+        const guildId = guildEditRequests.get(this);
+        if (guildId) {
+            guildEditRequests.delete(this);
+            if (typeof body === "string") body = stripSpoofedFeatures(guildId, body);
         }
         return OriginalSend.call(this, body);
     };
