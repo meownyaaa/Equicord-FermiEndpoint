@@ -1354,6 +1354,10 @@ export default definePlugin({
         return heldVoiceState?.streamKey === streamKey;
     },
 
+    isStreamConnected() {
+        return GoLiveMediaEngineStore.getMediaEngine().findConnection("stream") != null;
+    },
+
     onGatewayClose(code: number, reason?: string) {
         if (code !== 4000 || !GATEWAY_AUTH_FAILURE.test(reason ?? "")) return;
         logger.warn(`Gateway rejected the token (${reason}), opening the account picker`);
@@ -2037,6 +2041,10 @@ export default definePlugin({
                 {
                     match: /streamDelete\((\i)\)\{/,
                     replace: "$&if($self.isStreamDeleteHeld($1))return;"
+                },
+                {
+                    match: /streamCreate\(\i,\i,\i\)\{/,
+                    replace: "$&if($self.isStreamConnected())return;"
                 }
             ]
         },
