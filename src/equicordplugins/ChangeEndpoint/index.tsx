@@ -770,11 +770,11 @@ function uninstallXHRSanitiser() {
     }
 }
 
-const ALT_INVITE_HOST = "sbar.fyi";
+const ALT_INVITE_HOSTS = ["sbar.fyi", "sbar.top", "fermi.chat"];
 const ALT_INVITE_PATHS = ["/invite", "/i"];
 
 function isAltInviteHostName(host?: string | null) {
-    return host === ALT_INVITE_HOST || !!host?.endsWith(`.${ALT_INVITE_HOST}`);
+    return !!host && ALT_INVITE_HOSTS.some(alt => host === alt || host.endsWith(`.${alt}`));
 }
 
 interface ChannelWithIcon {
