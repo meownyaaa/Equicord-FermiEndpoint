@@ -307,7 +307,7 @@ const ACTIVITY_SHAPE: PayloadShape = {
     application_id: true, parent_application_id: true, details: true, details_url: true, state: true, state_url: true,
     emoji: { name: true, id: true, animated: true },
     party: { id: true, size: true },
-    assets: { large_image: true, large_text: true, small_image: true, small_text: true },
+    assets: { large_image: true, large_text: true, large_url: true, small_image: true, small_text: true, small_url: true, invite_cover_image: true },
     secrets: { join: true, spectate: true, match: true },
     instance: true, flags: true, id: true, sync_id: true,
     metadata: { button_urls: true, context_uri: true, album_id: true, artist_ids: true },
