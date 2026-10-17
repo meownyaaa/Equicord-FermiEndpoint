@@ -25,10 +25,7 @@ on:
                 type: string
                 description: "Git reference to test patches on. This can be a branch, tag, or commit SHA."
                 required: false
-    schedule:
-        #   # Every day at midnight
-        - cron: 0 0 * * *
-
+    
 env:
     FORCE_COLOR: true
 
