@@ -586,7 +586,7 @@ function stripGuildProfileOnlyFields(body: string) {
         const payload = JSON.parse(body);
         for (const key of GUILD_PROFILE_ONLY_KEYS) delete payload[key];
         if ("custom_banner" in payload) {
-            payload.banner = payload.custom_banner;
+            payload.discovery_splash = payload.custom_banner;
             delete payload.custom_banner;
         }
         return JSON.stringify(payload);
@@ -601,7 +601,7 @@ function stripGuildProfileOnlyFields(body: string) {
 function expandGuildProfileFields(payload: any) {
     if (payload && typeof payload === "object") {
         if ("icon" in payload) payload.icon_hash = payload.icon;
-        if ("banner" in payload) payload.custom_banner_hash = payload.banner;
+        if ("discovery_splash" in payload) payload.custom_banner_hash = payload.discovery_splash;
     }
     return payload;
 }
