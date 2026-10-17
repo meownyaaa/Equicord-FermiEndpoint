@@ -484,7 +484,7 @@ function boostPerks() {
 const realGuildFeatures = new Map<string, string[]>();
 
 function stripSpoofedFeatures(guildId: string, body: string) {
-    if (!body.includes('"features"')) return body;
+    if (settings.store.keepSpoofedGuildFeatures || !body.includes('"features"')) return body;
     try {
         const payload = JSON.parse(body);
         if (!Array.isArray(payload.features)) return body;

@@ -205,6 +205,11 @@ export const settings = definePluginSettings({
         restartNeeded: true,
         isValid: (value: number) => /^\d+$/.test(String(value)) || "Enter a whole number of 0 or more."
     },
+    keepSpoofedGuildFeatures: {
+        type: OptionType.BOOLEAN,
+        description: "Send the spoofed boost features along with guild edits instead of removing them first. Only turn this on if your server accepts them, otherwise guild edits fail.",
+        default: false
+    },
     legacyGuildOrderSync: {
         type: OptionType.BOOLEAN,
         description: "Reposition guilds to match the order saved on the deprecated /users/@me/settings endpoint " +
