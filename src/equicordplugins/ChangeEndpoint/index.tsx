@@ -1304,6 +1304,10 @@ export default definePlugin({
         return { ...presence, status: "offline" };
     },
 
+    identifyProperties({ client_app_state, ...properties }: Record<string, unknown>) {
+        return properties;
+    },
+
     holdVoiceState(socket: VoiceStateSocket, state: VoiceStateArgs) {
         if (state === releasedVoiceState) return false;
         if (heldVoiceState) {
@@ -2149,10 +2153,16 @@ export default definePlugin({
         },
         {
             find: "handleIdentify called",
-            replacement: {
-                match: /(?<=presence:)\i\.getInitialState\(\)/,
-                replace: "$self.identifyPresence($&)"
-            }
+            replacement: [
+                {
+                    match: /(?<=presence:)\i\.getInitialState\(\)/,
+                    replace: "$self.identifyPresence($&)"
+                },
+                {
+                    match: /(?<=properties:\{\.\.\.)(\i\.default\.getSuperProperties\(\)),client_app_state:\i,is_fast_connect:!1,gateway_connect_reasons:\i\.\i\(\),/,
+                    replace: "$self.identifyProperties($1),"
+                }
+            ]
         },
         {
             find: 'type:"GUILD_VERIFICATION_CHECK",guildId:',
