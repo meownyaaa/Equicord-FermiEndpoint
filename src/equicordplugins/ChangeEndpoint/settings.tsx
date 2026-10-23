@@ -89,10 +89,10 @@ function clearCachedLoginData() {
             if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
         }
 
-        showToast("Cleared cached login data", "success");
+        showToast({ text: "Cleared cached login data", variant: "success" });
     } catch (e) {
         logger.error("Failed to clear cached data", e);
-        showToast("Failed to clear cached data.", "failure");
+        showToast({ text: "Failed to clear cached data.", variant: "critical" });
     }
 }
 

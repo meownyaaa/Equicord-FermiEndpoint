@@ -792,9 +792,9 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
         setUploading(true);
         try {
             await RestAPI.patch({ url: `/channels/${channel.id}`, body: { icon } });
-            showToast(icon ? "channel icon updated" : "channel icon cleared", "success");
+            showToast({ text: icon ? "channel icon updated" : "channel icon cleared", variant: "success" });
         } catch (e) {
-            showToast("failed to update channel icon", "failure");
+            showToast({ text: "failed to update channel icon", variant: "critical" });
         } finally {
             setUploading(false);
         }
@@ -811,7 +811,7 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
             reader.onerror = () => resolve(null);
             reader.readAsDataURL(file);
         });
-        if (!imageUri) return showToast("couldn't read that image", "failure");
+        if (!imageUri) return showToast({ text: "couldn't read that image", variant: "critical" });
 
         await loadIconCropModalChunks();
         openModalLazy(async () => props => (
@@ -938,7 +938,7 @@ async function selectGifProvider(provider: string) {
         FluxDispatcher.dispatch({ type: "GIF_PICKER_QUERY_SUCCESS", items: trendingGifs.body });
     } catch (e) {
         logger.error(`Couldn't load GIFs from ${provider}`, e);
-        showToast(`Couldn't load GIFs from ${gifProviderName(provider)}.`, "failure");
+        showToast({ text: `Couldn't load GIFs from ${gifProviderName(provider)}.`, variant: "critical" });
     }
 }
 

@@ -64,14 +64,14 @@ async function uploadStickers(guildId: string, files: File[]) {
         }
     }
 
-    if (uploaded === files.length) showToast(`Uploaded ${uploaded} stickers.`, "success");
-    else showToast(`Uploaded ${uploaded} of ${files.length} stickers. Check the console for the ones that failed.`, "failure");
+    if (uploaded === files.length) showToast({ text: `Uploaded ${uploaded} stickers.`, variant: "success" });
+    else showToast({ text: `Uploaded ${uploaded} of ${files.length} stickers. Check the console for the ones that failed.`, variant: "critical" });
 }
 
 function confirmUpload(guild: Guild, dropped: File[]) {
     const files = dropped.filter(f => STICKER_TYPES.test(f.type));
     const skipped = dropped.length - files.length;
-    if (!files.length) return showToast("None of those files are PNG, APNG or GIF images.", "failure");
+    if (!files.length) return showToast({ text: "None of those files are PNG, APNG or GIF images.", variant: "critical" });
 
     Alerts.show({
         title: "Upload Stickers",
