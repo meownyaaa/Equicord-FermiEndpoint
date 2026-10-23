@@ -2260,6 +2260,13 @@ export default definePlugin({
             }
         },
         {
+            find: "disconnectForInvalidDaveMessage(`op ${",
+            replacement: {
+                match: /(?<=\i\.dave_protocol_version)(?=\))/,
+                replace: "??0"
+            }
+        },
+        {
             // never load libdave or advertise dave support, so voice identifies with
             // max_dave_protocol_version 0 and connections skip the e2ee frame transforms
             find: "startDavePreload(){",
