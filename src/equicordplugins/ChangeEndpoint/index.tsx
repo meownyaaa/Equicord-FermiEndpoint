@@ -2250,13 +2250,13 @@ export default definePlugin({
             }
         },
         {
-            find: "_maybeRefuseDaveDowngrade(",
+            find: "_ensureDaveProtocolVersionAllowed(",
             // spacebar backends never speak DAVE (voice e2ee) at all, so this always
             // sees a "downgrade" to version 0 and disconnects - refusing a downgrade
             // only makes sense against a backend that had dave to downgrade from
             replacement: {
-                match: /_maybeRefuseDaveDowngrade\((\i),(\i),(\i)\)\{/,
-                replace: "_maybeRefuseDaveDowngrade($1,$2,$3){return!1;"
+                match: /_ensureDaveProtocolVersionAllowed\(\i,\i,\i\)\{/,
+                replace: "$&return!0;"
             }
         },
         {
