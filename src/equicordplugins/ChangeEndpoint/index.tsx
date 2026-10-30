@@ -1324,7 +1324,7 @@ export default definePlugin({
         return { ...presence, status: "offline" };
     },
 
-    identifyProperties({ client_app_state, ...properties }: Record<string, unknown>) {
+    identifyProperties({ client_app_state, device_model_name, ...properties }: Record<string, unknown>) {
         return properties;
     },
 
