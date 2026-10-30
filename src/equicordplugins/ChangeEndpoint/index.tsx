@@ -17,7 +17,7 @@ import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -58,6 +58,7 @@ const logger = new Logger("ChangeEndpoint");
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
+const GatewayConnectionStore: { getSocket(): { isSessionEstablished(): boolean; updateGuildSubscriptions(subscriptions: Record<string, { channels: Record<string, number[][]>; }>): void; }; } = findStoreLazy("GatewayConnectionStore");
 const UploadManager = findByPropsLazy("clearAll", "addFile");
 const UploadAttachmentStore = findByPropsLazy("getUploadCount");
 const GuildActions: { requestMembersById(guildId: string, userIds: string[], presences: boolean): void; } = findByPropsLazy("requestMembersById", "banUser");
@@ -448,6 +449,21 @@ function goLiveInterceptor(payload: { type: string; sourceId?: string; sourceNam
     } else if (payload.type === "RTC_CONNECTION_STATE" && payload.context === "stream") {
         applyPendingGoLiveSource();
     }
+    return false;
+}
+
+const answeredListChannels = new Map<string, string>();
+let memberListResync: ReturnType<typeof setTimeout> | null = null;
+
+function requestMemberList(guildId: string, channelId: string) {
+    const socket = GatewayConnectionStore.getSocket();
+    if (socket.isSessionEstablished()) socket.updateGuildSubscriptions({ [guildId]: { channels: { [channelId]: [[0, 99]] } } });
+}
+
+function memberListInterceptor(payload: { type: string; guildId?: string; id?: string; }) {
+    if (payload.type !== "GUILD_MEMBER_LIST_UPDATE" || !payload.guildId) return false;
+    const channelId = answeredListChannels.get(payload.guildId);
+    if (channelId) payload.id = ChannelMemberStore.getProps(payload.guildId, channelId).listId.slice(payload.guildId.length + 1);
     return false;
 }
 
@@ -1328,6 +1344,18 @@ export default definePlugin({
         return properties;
     },
 
+    orderGuildSubscriptions(subscriptions: Record<string, { channels?: Record<string, unknown>; }>) {
+        if (getApiEndpoint() == null) return;
+        const selected = SelectedChannelStore.getChannelId();
+        for (const [guildId, subscription] of Object.entries(subscriptions)) {
+            const { channels } = subscription;
+            if (!channels || !Object.keys(channels).length) continue;
+            const answered = selected in channels ? selected : Object.keys(channels)[0];
+            subscription.channels = { [answered]: channels[answered], ...channels };
+            answeredListChannels.set(guildId, answered);
+        }
+    },
+
     holdVoiceState(socket: VoiceStateSocket, state: VoiceStateArgs) {
         if (state === releasedVoiceState) return false;
         if (heldVoiceState) {
@@ -1477,6 +1505,22 @@ export default definePlugin({
             if (queuedMembers.size) fetchNotFoundMembers();
         },
 
+        CHANNEL_SELECT({ guildId, channelId }: { guildId?: string; channelId?: string; }) {
+            if (getApiEndpoint() == null || !guildId || !channelId || answeredListChannels.get(guildId) === channelId) return;
+            requestMemberList(guildId, channelId);
+        },
+
+        PRESENCE_UPDATES({ updates }: { updates: { user: { id: string; }; }[]; }) {
+            if (getApiEndpoint() == null || memberListResync) return;
+            const guildId = ChannelStore.getChannel(SelectedChannelStore.getChannelId())?.guild_id;
+            if (!guildId || !updates.some(({ user }) => GuildMemberStore.isMember(guildId, user.id))) return;
+            memberListResync = setTimeout(() => {
+                memberListResync = null;
+                const channel = ChannelStore.getChannel(SelectedChannelStore.getChannelId());
+                if (channel?.guild_id) requestMemberList(channel.guild_id, channel.id);
+            }, 3000);
+        },
+
         STREAM_DELETE({ streamKey }: { streamKey: string; }) {
             if (heldVoiceState?.streamKey === streamKey) releaseVoiceState();
         },
@@ -1538,6 +1582,7 @@ export default definePlugin({
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
         FluxDispatcher.addInterceptor(reactionEmojiInterceptor);
+        FluxDispatcher.addInterceptor(memberListInterceptor);
         if (settings.store.ignoreEmailVerification) {
             const user = UserStore.getCurrentUser();
             if (user) user.verified = true;
@@ -1583,6 +1628,7 @@ export default definePlugin({
         releaseVoiceState();
         removeInterceptor(boostPerkInterceptor);
         removeInterceptor(reactionEmojiInterceptor);
+        removeInterceptor(memberListInterceptor);
         removeInterceptor(emailVerificationInterceptor);
         removeInterceptor(goLiveInterceptor);
         uninstallActivityUnfilter();
@@ -2077,6 +2123,10 @@ export default definePlugin({
                 {
                     match: /streamCreate\(\i,\i,\i\)\{/,
                     replace: "$&if($self.isStreamConnected())return;"
+                },
+                {
+                    match: /updateGuildSubscriptions\((\i)\)\{/,
+                    replace: "$&$self.orderGuildSubscriptions($1);"
                 }
             ]
         },
