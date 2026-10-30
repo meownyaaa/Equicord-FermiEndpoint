@@ -1031,6 +1031,26 @@ interface VoiceStateSocket {
     voiceStateUpdate(state: VoiceStateArgs): void;
 }
 
+const notMembers = new Set<string>();
+const queuedMembers = new Set<string>();
+let fetchingMembers = false;
+
+async function fetchNotFoundMembers() {
+    if (fetchingMembers) return;
+    fetchingMembers = true;
+    for (const key of queuedMembers) {
+        queuedMembers.delete(key);
+        const [guildId, userId] = key.split(":");
+        try {
+            const { body } = await RestAPI.get({ url: Constants.Endpoints.GUILD_MEMBER(guildId, userId) });
+            FluxDispatcher.dispatch({ type: "GUILD_MEMBERS_CHUNK_BATCH", chunks: [{ guildId, members: [body], notFound: [] }] });
+        } catch (e) {
+            if ((e as { status?: number; }).status === 404) notMembers.add(key);
+        }
+    }
+    fetchingMembers = false;
+}
+
 let heldVoiceState: { socket: VoiceStateSocket; state: VoiceStateArgs; streamKey: string; timer: ReturnType<typeof setTimeout>; } | null = null;
 let releasedVoiceState: VoiceStateArgs | null = null;
 
@@ -1448,6 +1468,14 @@ export default definePlugin({
             loadGifProviders();
         },
         CURRENT_USER_UPDATE: saveAccountAvatar,
+
+        GUILD_MEMBERS_CHUNK_BATCH({ chunks }: { chunks: { guildId: string; notFound?: string[]; }[]; }) {
+            if (getApiEndpoint() == null) return;
+            for (const { guildId, notFound } of chunks)
+                for (const userId of notFound ?? [])
+                    if (!notMembers.has(`${guildId}:${userId}`)) queuedMembers.add(`${guildId}:${userId}`);
+            if (queuedMembers.size) fetchNotFoundMembers();
+        },
 
         STREAM_DELETE({ streamKey }: { streamKey: string; }) {
             if (heldVoiceState?.streamKey === streamKey) releaseVoiceState();
