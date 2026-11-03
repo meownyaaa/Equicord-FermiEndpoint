@@ -19,7 +19,7 @@ import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -1456,6 +1456,13 @@ export default definePlugin({
         );
     },
 
+    renderLoginSwitchBackendButton() {
+        return ReactDOM.createPortal(
+            <div className="vc-endpoint-loading-switch-wrapper">{this.renderSwitchBackendButton()}</div>,
+            document.body
+        );
+    },
+
     // actual loading screen buttons, pretty self explanatory #lol
     renderLoadingScreenButtons() {
         return (
@@ -2279,14 +2286,14 @@ export default definePlugin({
             find: '"0M5fN7"])',
             replacement: {
                 match: /(children:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",textVariant:"body-sm\/medium",text:\i\.intl\.string\(\i\.\i\["9g2mqT"\]\),onClick:\i\}\)\}\))\]\}\)\}/,
-                replace: "$1,$self.renderSwitchBackendButton()]})}"
+                replace: "$1,$self.renderLoginSwitchBackendButton()]})}"
             }
         },
         {
             find: "username webauthn",
             replacement: {
                 match: /(\i&&\i)&&\(0,(\i)\.jsx\)\("div",\{className:(\i\.\i),children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
-                replace: "(0,$2.jsxs)(\"div\",{className:$3,style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$1&&$4,$self.renderSwitchBackendButton()]})"
+                replace: "(0,$2.jsxs)(\"div\",{className:$3,style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$1&&$4,$self.renderLoginSwitchBackendButton()]})"
             }
         },
         {
