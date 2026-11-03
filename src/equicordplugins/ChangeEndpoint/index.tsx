@@ -2093,10 +2093,18 @@ export default definePlugin({
             ]
         },
         {
-            find: "#{intl::CREATE_SERVER_GUIDELINES}",
+            find: "#{intl::CREATE_SERVER_GUIDELINES},{guidelinesURL:",
             predicate: () => serverWithCodeOfConduct() != null,
             replacement: {
                 match: /\i\.intl\.format\(\i\.t#{intl::CREATE_SERVER_GUIDELINES},\{guidelinesURL:[^}]{0,40}\}\)/,
+                replace: "$self.renderGuildGuidelines()"
+            }
+        },
+        {
+            find: ".terms,{guidelinesURL:",
+            predicate: () => serverWithCodeOfConduct() != null,
+            replacement: {
+                match: /\i\.intl\.format\(\i\.terms,\{guidelinesURL:[^}]{0,40}\}\)/,
                 replace: "$self.renderGuildGuidelines()"
             }
         },
