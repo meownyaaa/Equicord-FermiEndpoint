@@ -2013,7 +2013,7 @@ export default definePlugin({
             }
         },
         {
-            find: "IS_SPOILER)",
+            find: 'case"PLAINTEXT_PREVIEW":return(0,',
             replacement: {
                 match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
                 replace: 'spoiler:($2.filename??$2.originalItem?.filename)?.startsWith("SPOILER_")||$1',
@@ -2021,14 +2021,6 @@ export default definePlugin({
                     might not be functional? i get a warning about this in logs, pretty sure the other
                     stuff is patching spoilers, not this
                 */
-            }
-        },
-        {
-            find: "POTENTIAL_EXPLICIT_CONTENT",
-            replacement: {
-                match: /function \i\((\i),\i\)\{let\{flags:\i=0\}=\1,.{0,150}?(\(0,\i\.\i\)\(\i,\i\.\i\.IS_SPOILER\))\?/,
-                replace: (match: string, param: string, flagCheck: string) =>
-                    match.replace(flagCheck, `((${param}.filename??${param}.originalItem?.filename)?.startsWith("SPOILER_")||${flagCheck})`)
             }
         },
         {
@@ -2179,7 +2171,7 @@ export default definePlugin({
             find: 'location:"getUserMaxFileSize"',
             predicate: () => settings.store.serverAttachmentLimit,
             replacement: {
-                match: /function \i\(\i\)\{(?=if\(null==\i\)return \i\.\i;let \i=\i\.\i\.getPremiumTypeOverride\(\))/,
+                match: /function \i\(\i\)\{(?=return null==\i\?\i\.\i:\i\.isStaff\(\))/,
                 replace: "$&if($self.maxAttachmentSize())return $self.maxAttachmentSize();"
             }
         },
@@ -2284,9 +2276,9 @@ export default definePlugin({
             }
         },
         {
-            find: "MULTI_ACCOUNT_SWITCH_LANDING",
+            find: '"0M5fN7"])',
             replacement: {
-                match: /(children:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",textVariant:"text-sm\/medium",text:\i\.intl\.string\(\i\.\i\["9g2mqT"\]\),onClick:\i\}\)\}\))\]\}\)\}/,
+                match: /(children:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",textVariant:"body-sm\/medium",text:\i\.intl\.string\(\i\.\i\["9g2mqT"\]\),onClick:\i\}\)\}\))\]\}\)\}/,
                 replace: "$1,$self.renderSwitchBackendButton()]})}"
             }
         },
@@ -2298,10 +2290,10 @@ export default definePlugin({
             }
         },
         {
-            find: '"13/7kX"',
+            find: '"13/7kX"]),type:"button"',
             replacement: {
-                match: /leading:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:(\i),text:(\i\.intl\.string\(\i\.\i\["13\/7kX"\]\)),type:"button"\}\)/,
-                replace: 'leading:(0,r.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderSwitchBackendButton(),(0,r.jsx)(C.Q,{variant:"secondary",size:"md",onClick:$1,text:$2,type:"button"})]})'
+                match: /(?<=leading:)\(0,(\i)\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:\i,text:\i\.intl\.string\(\i\.\i\["13\/7kX"\]\),type:"button"\}\)/,
+                replace: '(0,$1.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderSwitchBackendButton(),$&]})'
             }
         },
         {
