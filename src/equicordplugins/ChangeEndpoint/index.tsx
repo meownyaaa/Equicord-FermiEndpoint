@@ -6,8 +6,10 @@
 
 import "./components/styles.css";
 
+import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { WebsiteIcon } from "@components/Icons";
+import { Text } from "@components/Text";
 import SettingsPlugin from "@plugins/_core/settings";
 import { getIntlMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
@@ -17,7 +19,7 @@ import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar,Button, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, Text, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -858,16 +860,16 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
                             : <WebsiteIcon />}
                     </div>
                     <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
-                    <Button size={Button.Sizes.SMALL} disabled={uploading} onClick={() => inputRef.current?.click()}>
+                    <Button size="small" disabled={uploading} onClick={() => inputRef.current?.click()}>
                         Change Icon
                     </Button>
                     {channel.icon && (
-                        <Button size={Button.Sizes.SMALL} color={Button.Colors.RED} disabled={uploading} onClick={() => patchIcon(null)}>
+                        <Button size="small" variant="dangerPrimary" disabled={uploading} onClick={() => patchIcon(null)}>
                             Remove
                         </Button>
                     )}
                 </div>
-                <Text variant="text-xs/normal" color="text-muted" style={{ marginTop: "8px" }}>Shown in the channel list in place of the default icon.</Text>
+                <Text size="xs" weight="normal" color="text-muted" style={{ marginTop: "8px" }}>Shown in the channel list in place of the default icon.</Text>
             </div>
         </SettingsFieldset>
     );
@@ -968,8 +970,8 @@ const GifProviderTabs = ErrorBoundary.wrap(function GifProviderTabs() {
             {gifProviders.map(provider => (
                 <Button
                     key={provider}
-                    size={Button.Sizes.SMALL}
-                    color={provider === current ? Button.Colors.BRAND : Button.Colors.PRIMARY}
+                    size="small"
+                    variant={provider === current ? "primary" : "secondary"}
                     onClick={() => selectGifProvider(provider)}
                 >
                     {gifProviderName(provider)}
@@ -1013,17 +1015,17 @@ const StuckLoadingNotice = ErrorBoundary.wrap(() => {
     return (
         <div className="vc-endpoint-stuck-backdrop">
             <div className="vc-endpoint-stuck-notice" role="alertdialog" aria-label="Still connecting">
-                <Text variant="heading-lg/semibold" color="text-strong">Still connecting?</Text>
-                <Text variant="text-md/normal" color="text-default">This is taking longer than usual. If the server or your connection is just slow, you can ignore this. Otherwise, some likely reasons:</Text>
+                <Text size="lg" weight="semibold" color="text-strong">Still connecting?</Text>
+                <Text size="md" weight="normal" color="text-default">This is taking longer than usual. If the server or your connection is just slow, you can ignore this. Otherwise, some likely reasons:</Text>
                 <ul className="vc-endpoint-stuck-reasons">
-                    <li><Text variant="text-md/normal" color="text-default">{name} might be down right now.</Text></li>
-                    {predefined ? null : <li><Text variant="text-md/normal" color="text-default">This custom server might not be set up correctly.</Text></li>}
-                    <li><Text variant="text-md/normal" color="text-default">You switched servers without switching to an account from that server.</Text></li>
-                    <li><Text variant="text-md/normal" color="text-default">Your ISP might be blocking it. A VPN can help.</Text></li>
+                    <li><Text size="md" weight="normal" color="text-default">{name} might be down right now.</Text></li>
+                    {predefined ? null : <li><Text size="md" weight="normal" color="text-default">This custom server might not be set up correctly.</Text></li>}
+                    <li><Text size="md" weight="normal" color="text-default">You switched servers without switching to an account from that server.</Text></li>
+                    <li><Text size="md" weight="normal" color="text-default">Your ISP might be blocking it. A VPN can help.</Text></li>
                 </ul>
                 <div className="vc-endpoint-stuck-actions">
-                    <Button size={Button.Sizes.SMALL} look={Button.Looks.OUTLINED} color={Button.Colors.PRIMARY} onClick={() => setOpen(false)}>Close</Button>
-                    <Button size={Button.Sizes.SMALL} onClick={() => { setOpen(false); openSwitchAccountLanding(); }}>Switch Account</Button>
+                    <Button size="small" variant="secondary" onClick={() => setOpen(false)}>Close</Button>
+                    <Button size="small" onClick={() => { setOpen(false); openSwitchAccountLanding(); }}>Switch Account</Button>
                 </div>
             </div>
         </div>
@@ -1112,8 +1114,8 @@ function AccountSwitcherMenu({ onClose }: { onClose(): void; }) {
                             <div className="vc-endpoint-account-row">
                                 <Avatar src={accountAvatarURL(user)} size="SIZE_24" aria-label={account.username} />
                                 <div className="vc-endpoint-account-name">
-                                    <Text variant="text-sm/normal">{account.username}</Text>
-                                    {!user.hasUniqueUsername() && <Text variant="text-sm/normal">#{account.discriminator}</Text>}
+                                    <Text size="sm" weight="normal">{account.username}</Text>
+                                    {!user.hasUniqueUsername() && <Text size="sm" weight="normal">#{account.discriminator}</Text>}
                                 </div>
                                 {account.id === currentId && <CircleCheckIcon size="sm" color="var(--brand-500)" secondaryColor="var(--white-500)" />}
                                 {invalid && <CircleWarningIcon size="xs" color="var(--red-400)" secondaryColor="var(--white-500)" />}
@@ -1419,7 +1421,7 @@ export default definePlugin({
     renderLinkedBackend(userId: string) {
         const backend = settings.store.accountBackends[userId];
         const name = PREDEFINED_SERVERS.find(s => s.id === backend)?.name ?? settings.store.customServers.find(s => s.id === backend)?.name;
-        return name ? <Text className="vc-endpoint-linked-backend" variant="text-sm/normal" color="text-muted">{name}</Text> : null;
+        return name ? <Text className="vc-endpoint-linked-backend" size="sm" weight="normal" color="text-muted">{name}</Text> : null;
     },
 
     isLinkedElsewhere(userId: string) {
@@ -1445,9 +1447,8 @@ export default definePlugin({
             <Button
                 key="change-endpoint-switch-backend"
                 type="button"
-                size={Button.Sizes.SMALL}
-                look={Button.Looks.OUTLINED}
-                color={Button.Colors.PRIMARY}
+                size="small"
+                variant="secondary"
                 onClick={e => this.openBackendMenu(e)}
             >
                 Switch Backend
@@ -1464,9 +1465,8 @@ export default definePlugin({
                     <Button
                         key="change-endpoint-loading-switch-backend"
                         type="button"
-                        size={Button.Sizes.SMALL}
-                        look={Button.Looks.OUTLINED}
-                        color={Button.Colors.PRIMARY}
+                        size="small"
+                        variant="secondary"
                         onClick={e => this.openBackendMenu(e)}
                     >
                         Switch Backend
@@ -1474,9 +1474,8 @@ export default definePlugin({
                     <Button
                         key="change-endpoint-loading-switch-account"
                         type="button"
-                        size={Button.Sizes.SMALL}
-                        look={Button.Looks.OUTLINED}
-                        color={Button.Colors.PRIMARY}
+                        size="small"
+                        variant="secondary"
                         onClick={e => this.onSwitchAccountClick(e)}
                     >
                         Switch Account

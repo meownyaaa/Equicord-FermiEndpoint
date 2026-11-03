@@ -5,10 +5,11 @@
  */
 
 import { definePluginSettings, Settings } from "@api/Settings";
+import { Button } from "@components/Button";
 import { localStorage } from "@utils/localStorage";
 import { Logger } from "@utils/Logger";
 import { OptionType } from "@utils/types";
-import { Alerts, Button, showToast } from "@webpack/common";
+import { Alerts, showToast } from "@webpack/common";
 
 const logger = new Logger("ChangeEndpoint");
 
@@ -98,7 +99,7 @@ function clearCachedLoginData() {
 
 const ClearCacheButton = () => (
     <Button
-        color={Button.Colors.RED}
+        variant="dangerPrimary"
         onClick={() => Alerts.show({
             title: "Clear cached login data?",
             body: "This clears Discord's localStorage, sessionStorage and cookies for this client. " +
@@ -107,7 +108,7 @@ const ClearCacheButton = () => (
                 "top of the plugins page.",
             confirmText: "Clear data",
             cancelText: "Cancel",
-            confirmColor: Button.Colors.RED,
+            confirmColor: "danger",
             onConfirm: clearCachedLoginData
         })}
     >

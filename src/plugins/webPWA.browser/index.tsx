@@ -128,8 +128,8 @@ export default definePlugin({
             // keybinds
             this.ctrl.abort();
             this.ctrl = new AbortController();
-            window.addEventListener("message", ({ data }) => {
-                if (data?.type === "vencord:keybinds" && _keybinds) {
+            window.addEventListener("message", ({ data, source }) => {
+                if (source === window && data?.type === "vencord:keybinds" && _keybinds) {
                     const { meta } = data;
                     if (meta in _keybinds) _keybinds[meta].onTrigger();
                 }
@@ -196,10 +196,14 @@ export default definePlugin({
 
             const totalCount = mentionCount + pendingRequests;
 
-            // vesktop uses -1 for the unread dot, but the web badging api only takes counts >= 0
-            // and shows a plain dot when called without one
-            if (!totalCount && hasUnread && !disableUnreadBadge) navigator.setAppBadge();
-            else navigator.setAppBadge(totalCount);
+            if (totalCount > 0) {
+                navigator.setAppBadge(totalCount);
+            } else if (hasUnread && !disableUnreadBadge) {
+                // no argument shows a dot instead of a number
+                navigator.setAppBadge();
+            } else {
+                navigator.clearAppBadge();
+            }
         } catch (e) {
             console.error(e);
         }

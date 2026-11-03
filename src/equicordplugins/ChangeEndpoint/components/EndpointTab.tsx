@@ -6,15 +6,16 @@
 
 import "./styles.css";
 
+import { Button, TextButton } from "@components/Button";
 import { Card } from "@components/Card";
-import { HeadingPrimary, HeadingTertiary } from "@components/Heading";
+import { Heading } from "@components/Heading";
 import { DoubleCheckmarkIcon, PencilIcon, PlusIcon, TrashIcon, WebsiteIcon } from "@components/Icons";
 import { Paragraph } from "@components/Paragraph";
 import { SettingsTab, wrapTab } from "@components/settings";
 import { type CustomServer,PREDEFINED_SERVERS } from "@equicordplugins/ChangeEndpoint/servers";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
-import { Alerts, Button, React, TextInput, UserStore, useState } from "@webpack/common";
+import { Alerts, React, TextInput, UserStore, useState } from "@webpack/common";
 
 import { settings } from "../settings";
 import { connectedBackend } from "../utils";
@@ -98,8 +99,8 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
             <TextInput value={name} placeholder={"Display name (e.g. \"My Instance\")"} onChange={setName} />
 
             <div className={classes(Margins.top8, "vc-endpoint-type-toggle")}>
-                <Button size={Button.Sizes.SMALL} look={Button.Looks.FILLED} color={type === "simple" ? Button.Colors.BRAND : Button.Colors.TRANSPARENT} onClick={() => setType("simple")}>Simplified</Button>
-                <Button size={Button.Sizes.SMALL} look={Button.Looks.FILLED} color={type === "advanced" ? Button.Colors.BRAND : Button.Colors.TRANSPARENT} onClick={() => setType("advanced")}>Advanced</Button>
+                <Button size="small" variant={type === "simple" ? "primary" : "secondary"} onClick={() => setType("simple")}>Simplified</Button>
+                <Button size="small" variant={type === "advanced" ? "primary" : "secondary"} onClick={() => setType("advanced")}>Advanced</Button>
             </div>
 
             {type === "simple" ? (
@@ -118,8 +119,8 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
             )}
 
             <div className={classes(Margins.top16, "vc-endpoint-form-actions")}>
-                <Button size={Button.Sizes.SMALL} disabled={!canSave} onClick={save}>{existing ? "Save Changes" : "Add Server"}</Button>
-                <Button size={Button.Sizes.SMALL} look={Button.Looks.LINK} color={Button.Colors.PRIMARY} onClick={onDone}>Cancel</Button>
+                <Button size="small" disabled={!canSave} onClick={save}>{existing ? "Save Changes" : "Add Server"}</Button>
+                <TextButton variant="primary" onClick={onDone}>Cancel</TextButton>
             </div>
         </Card>
     );
@@ -158,7 +159,7 @@ function AccountLinkRow() {
                             : "Not linked to any server"}
                     </Paragraph>
                 </div>
-                <Button size={Button.Sizes.SMALL} look={Button.Looks.FILLED} color={Button.Colors.TRANSPARENT} onClick={linkedBackend ? unlinkCurrent : linkCurrent}>
+                <Button size="small" variant="secondary" onClick={linkedBackend ? unlinkCurrent : linkCurrent}>
                     {linkedBackend ? "Unlink" : `Link to ${serverName(backend)}`}
                 </Button>
             </Card>
@@ -194,7 +195,7 @@ function EndpointTab() {
             title: "Remove Server?",
             body: `This removes "${serverName(id)}" from your server list.`,
             confirmText: "Remove",
-            confirmColor: Button.Colors.RED,
+            confirmColor: "danger",
             cancelText: "Cancel",
             onConfirm: () => {
                 settings.store.customServers = settings.plain.customServers.filter(s => s.id !== id);
@@ -222,7 +223,7 @@ function EndpointTab() {
                 </div>
             </Card>
 
-            <HeadingPrimary className={Margins.top20}>Servers</HeadingPrimary>
+            <Heading tag="h2" className={Margins.top20}>Servers</Heading>
             <Paragraph className={classes(Margins.bottom8, "vc-endpoint-muted")}>Pick a Spacebar backend to connect to. Changing this requires a restart.</Paragraph>
 
             <div className="vc-endpoint-server-list">
@@ -277,13 +278,13 @@ function EndpointTab() {
                 <CustomServerForm onDone={() => setAddingCustom(false)} />
             ) : (
                 <div className={classes(Margins.top8, "vc-endpoint-form-actions")}>
-                    <Button size={Button.Sizes.SMALL} look={Button.Looks.FILLED} color={Button.Colors.TRANSPARENT} onClick={() => setAddingCustom(true)}>
+                    <Button size="small" variant="secondary" onClick={() => setAddingCustom(true)}>
                         <PlusIcon height={14} width={14} /> Add Custom Server
                     </Button>
                 </div>
             )}
 
-            <HeadingPrimary className={Margins.top24}>Accounts</HeadingPrimary>
+            <Heading tag="h2" className={Margins.top24}>Accounts</Heading>
             <Paragraph className={classes(Margins.bottom8, "vc-endpoint-muted")}>
                 Link the account you're currently on to the server selected above. Switching to a linked
                 account from Discord's own account switcher will switch to its server too (a reload happens
@@ -291,7 +292,7 @@ function EndpointTab() {
             </Paragraph>
             <AccountLinkRow />
 
-            <HeadingTertiary className={Margins.top24}>About</HeadingTertiary>
+            <Heading tag="h4" className={Margins.top24}>About</Heading>
             <Paragraph size="sm" className="vc-endpoint-muted">Spacebar is the default instance. Add a custom server to connect to a different one instead.</Paragraph>
         </div>
     );
