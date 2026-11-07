@@ -4,13 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { getGatewayEndpoint } from "@equicordplugins/ChangeEndpoint/utils";
+import { type EndpointEnv, getGatewayEndpoint, writeEndpointEnv } from "@equicordplugins/ChangeEndpoint/utils";
 import definePlugin, { StartAt } from "@utils/types";
-
-interface GatewayEnv {
-    GATEWAY_ENDPOINT: string;
-    GATEWAY_ALT_ENDPOINT?: string;
-}
 
 interface FastConnectSocket {
     ws: WebSocket;
@@ -23,7 +18,7 @@ function replaceWithValue(key: string, value: unknown) {
 
 export default definePlugin({
     name: "EndpointHelper",
-    description: "Points Discord's early gateway connection at the ChangeEndpoint backend, so the client reuses it instead of opening one to Discord and throwing it away.",
+    description: "Writes the ChangeEndpoint backend into Discord's environment before the client starts, so its early gateway connection and every endpoint lookup go to the right server.",
     authors: [],
     required: true,
     startAt: StartAt.Init,
@@ -32,20 +27,15 @@ export default definePlugin({
         const gateway = getGatewayEndpoint();
         if (!gateway) return;
 
-        const redirect = (env: GatewayEnv) => {
-            env.GATEWAY_ENDPOINT = gateway;
-            env.GATEWAY_ALT_ENDPOINT = gateway;
-        };
-
         if (window.GLOBAL_ENV) {
-            redirect(window.GLOBAL_ENV);
+            writeEndpointEnv(window.GLOBAL_ENV);
             return;
         }
 
         Object.defineProperty(window, "GLOBAL_ENV", {
             configurable: true,
-            set(env: GatewayEnv) {
-                redirect(env);
+            set(env: EndpointEnv) {
+                writeEndpointEnv(env);
                 replaceWithValue("GLOBAL_ENV", env);
             }
         });

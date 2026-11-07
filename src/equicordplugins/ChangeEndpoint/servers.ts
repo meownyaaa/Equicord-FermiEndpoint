@@ -37,5 +37,6 @@ export const PREDEFINED_SERVERS: PredefinedServer[] = [
             cdnHost: "https://share.it-voip.4siwi.net:8099",
             gatewayEndpoint: "wss://proxy.it-voip.4siwi.net:8098"
         }
-    }
+    },
+    { id: "discord", name: "Discord", host: "discord.com", endpoints: {} }
 ];

@@ -6,8 +6,10 @@
 
 import "./components/styles.css";
 
+import { Settings } from "@api/Settings";
 import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
+import { FormSwitch } from "@components/FormSwitch";
 import { WebsiteIcon } from "@components/Icons";
 import { Text } from "@components/Text";
 import SettingsPlugin from "@plugins/_core/settings";
@@ -15,17 +17,17 @@ import { getIntlMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import { openModalLazy } from "@utils/modal";
+import { escapeRegExp } from "@utils/text";
 import definePlugin, { PluginNative } from "@utils/types";
 import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
-import type { ComponentType, ReactElement, ReactNode } from "react";
+import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import type { ComponentType, ReactElement } from "react";
 
 import { guildifyAst } from "./guildTerminology";
-import { PREDEFINED_SERVERS } from "./servers";
+import { type CustomServer, PREDEFINED_SERVERS } from "./servers";
 import { migrateCustomServers, migrateDefaultBackend, migrateVideoPlayerSetting, settings } from "./settings";
-import { DiscordSpoiler } from "./spoiler";
 
 const AuthActions = findLazy(m => typeof m?.A?.logoutInternal === "function" && m.A.logoutInternal.name === "logoutInternal" && typeof m.A.login === "function");
 const Native = VencordNative.pluginHelpers.ChangeEndpoint as PluginNative<typeof import("./native")>;
@@ -39,11 +41,11 @@ interface MultiAccountUser {
 }
 
 const MultiAccountStore: { getUsers(): MultiAccountUser[]; } = findStoreLazy("MultiAccountStore");
-const TokenStorage: { getToken(userId: string): string | null | undefined; setToken(token: string, userId: string): void; } = findByPropsLazy("getToken", "setToken", "hideToken");
 const switchToAccount: (userId: string) => Promise<unknown> = findByCodeLazy("MULTI_ACCOUNT_SWITCH_START");
 const UserRecord: typeof User = findLazy(m => m?.prototype?.getAvatarURL);
 const CircleCheckIcon = findComponentByCodeLazy("M12 23a11 11 0 1 0 0-22 11 11 0 0 0 0 22Zm5.7-13.3");
 const CircleWarningIcon = findComponentByCodeLazy("M12 23a11 11 0 1 0 0-22 11 11 0 0 0 0 22Zm1.44-15.94");
+const SelectedBackendIcon = () => <CircleCheckIcon size="sm" color="var(--brand-500)" secondaryColor="var(--white-500)" />;
 
 interface GoLiveEngine {
     getDesktopSource(quality: { width: number; height: number; }, wantsAudio: boolean): Promise<string>;
@@ -53,14 +55,14 @@ interface GoLiveEngine {
     desktopInputPool: { get(id: string): unknown; release(input: unknown): void; };
 }
 const GoLiveMediaEngineStore = findStoreLazy("MediaEngineStore") as { getMediaEngine(): GoLiveEngine; };
-import { captureConnectedBackend, connectedBackend, getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint } from "./utils";
-import { CustomVideoPlayer } from "./videoPlayer";
+import { captureConnectedBackend, connectedBackend, getApiEndpoint, getCdnHost, getGatewayEndpoint, getMediaProxyEndpoint, hasEndpoints, linkCurrentAccount, prepareTokenForBackend, TokenStorage, writeEndpointEnv } from "./utils";
+import { CustomVideoPlayer, expireSeekableMedia, makeMediaSeekable, releaseSeekableMedia } from "./videoPlayer";
 
 const logger = new Logger("ChangeEndpoint");
 
 const GuildActionCreators = findByPropsLazy("moveById", "createGuildFolderLocal");
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
-const GatewayConnectionStore: { getSocket(): { isSessionEstablished(): boolean; updateGuildSubscriptions(subscriptions: Record<string, { channels: Record<string, number[][]>; }>): void; }; } = findStoreLazy("GatewayConnectionStore");
+const GatewayConnectionStore: { getSocket(): { isSessionEstablished(): boolean; updateGuildSubscriptions(subscriptions: Record<string, { channels: Record<string, number[][]>; }>): void; resumeUrl: string | null; sessionId: string | null; }; } = findStoreLazy("GatewayConnectionStore");
 const UploadManager = findByPropsLazy("clearAll", "addFile");
 const UploadAttachmentStore = findByPropsLazy("getUploadCount");
 const GuildActions: { requestMembersById(guildId: string, userIds: string[], presences: boolean): void; } = findByPropsLazy("requestMembersById", "banUser");
@@ -92,6 +94,7 @@ interface ColorRole {
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSignature: string | null = null;
+let renamingChannel = false;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let pollingStarted = false;
 let pollRunning = false;
@@ -296,6 +299,84 @@ interface VoiceSocket {
 
 const republishedSockets = new WeakSet<VoiceSocket>();
 
+// module level values discord reads from GLOBAL_ENV once, recomputed when the backend changes in place
+const envRefreshers: (() => void)[] = [];
+let envRefreshCount = 0;
+
+function splitDeclarators(code: string) {
+    const parts: string[] = [];
+    const stack: string[] = [];
+    let start = 0;
+    for (let i = 0; i < code.length; i++) {
+        const c = code[i];
+        const top = stack.at(-1);
+        if (top === "`" || top === '"' || top === "'") {
+            if (c === "\\") i++;
+            else if (c === top) stack.pop();
+            else if (top === "`" && c === "$" && code[i + 1] === "{") stack.push(code[i++]);
+        } else if (c === "`" || c === '"' || c === "'" || c === "(" || c === "[" || c === "{") stack.push(c);
+        else if (c === ")" || c === "]" || c === "}") stack.pop();
+        else if (c === "," && !stack.length) {
+            parts.push(code.slice(start, i));
+            start = i + 1;
+        }
+    }
+    return [...parts, code.slice(start)];
+}
+
+function refreshOnEnvChange(chain: string) {
+    const refreshed: string[] = [];
+    const statements: string[] = [];
+    for (const declarator of splitDeclarators(chain)) {
+        const eq = declarator.indexOf("=");
+        const target = declarator.slice(0, eq);
+        const init = declarator.slice(eq + 1);
+        const dependsOnRefreshed = refreshed.some(name => new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$])`).test(init));
+        if (!init.includes("GLOBAL_ENV") && !dependsOnRefreshed) continue;
+        refreshed.push(...(target.startsWith("{") ? [...target.matchAll(/:([\w$]+)/g)].map(m => m[1]) : [target]));
+        statements.push(target.startsWith("{") ? `(${declarator})` : declarator);
+    }
+    return `${chain},$ceEnv${envRefreshCount++}=$self.onEnvChange(()=>{${statements.join(";")}})`;
+}
+
+const DISCORD_HOST_RE =/(^|\.)(discord\.(com|gg|media)|discordapp\.(com|net))(:\d+)?$/;
+const hostOf = (endpoint: string) => new URL(/^(\w+:)?\/\//.test(endpoint) ? endpoint : `//${endpoint}`, location.origin).host;
+
+function backendOfUrl(url: string) {
+    const { host } = new URL(url, location.origin);
+    if (DISCORD_HOST_RE.test(host)) return "discord";
+    if (pendingLoginBackend && host === hostOf(apiBase(pendingLoginBackend))) return pendingLoginBackend;
+    const hosts = [getApiEndpoint(), getGatewayEndpoint(), getCdnHost(), getMediaProxyEndpoint()].flatMap(e => e ? [hostOf(e)] : []);
+    return hosts.includes(host) ? connectedBackend : null;
+}
+
+const tokenOwner = (token: string) =>
+    Object.entries(settings.store.accountBackends).find(([userId]) => TokenStorage.getToken(userId) === token)?.[1];
+
+function isTokenAllowed(token: unknown, url: string) {
+    if (typeof token !== "string" || !token) return true;
+    const target = backendOfUrl(url);
+    const owner = target && tokenOwner(token);
+    return !owner || owner === target;
+}
+
+let lastTokenRescue = 0;
+
+function blockForeignIdentify(socket: WebSocket, data: string) {
+    if (!/"op":[26][,}]/.test(data)) return false;
+    const token: unknown = JSON.parse(data).d?.token;
+    if (isTokenAllowed(token, socket.url)) return false;
+
+    logger.warn("Blocked a gateway connect carrying another backend's token");
+    socket.close(1000);
+    if (Date.now() - lastTokenRescue > 15_000 && typeof token === "string") {
+        lastTokenRescue = Date.now();
+        showToast({ text: `This account is on ${backendName(tokenOwner(token) ?? "")}. Switch to or add a ${backendName(connectedBackend ?? "")} account.`, variant: "critical" });
+        setTimeout(openSwitchAccountLanding);
+    }
+    return true;
+}
+
 function isGatewayUrl(url: string) {
     const gateway = getGatewayEndpoint();
     const host = gateway && parseUrl(gateway)?.host;
@@ -353,6 +434,7 @@ function installGatewaySendSanitiser() {
     if (originalSend) return;
     originalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function (this: WebSocket, data: any) {
+        if (typeof data === "string" && blockForeignIdentify(this, data)) return;
         const payload = typeof data === "string" && isGatewayUrl(this.url)
             ? sanitiseGatewayPayload(data)
             : data;
@@ -483,7 +565,24 @@ const BOOST_FEATURES: GuildFeatures[] = [
     "MORE_EMOJI", "MORE_STICKERS", "MORE_SOUNDBOARD", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED"
 ];
 
-const instanceLimits = { maxEmojis: 2000, maxStickers: 500, maxAttachmentSize: 0, maxAttachments: 10 };
+const instanceLimits = { maxEmojis: 2000, maxStickers: 500, maxAttachmentSize: 0, maxAttachments: 10, maxBio: 190, maxPronouns: 40, maxMessageLength: 1048576, maxChannelName: 32, maxTopic: 1024, maxUsername: 32 };
+
+interface InstanceInfo {
+    instanceName?: string;
+    instanceDescription?: string | null;
+    frontPage?: string | null;
+    tosPage?: string | null;
+    correspondenceEmail?: string | null;
+}
+
+let instanceInfo: InstanceInfo | null = null;
+
+async function loadInstanceInfo() {
+    const { body } = await RestAPI.get({ url: "/policies/instance" });
+    instanceInfo = body ?? null;
+}
+
+const httpUrl = (url: string | null | undefined) => url && /^https?:\/\//.test(url) ? url : undefined;
 
 async function loadInstanceLimits() {
     const { body } = await RestAPI.get({ url: "/policies/instance/limits" });
@@ -491,6 +590,12 @@ async function loadInstanceLimits() {
     instanceLimits.maxStickers = body?.guild?.maxStickers ?? instanceLimits.maxStickers;
     instanceLimits.maxAttachmentSize = body?.message?.maxAttachmentSize ?? instanceLimits.maxAttachmentSize;
     instanceLimits.maxAttachments = body?.message?.maxAttachments ?? instanceLimits.maxAttachments;
+    instanceLimits.maxBio = body?.user?.maxBio ?? instanceLimits.maxBio;
+    instanceLimits.maxPronouns = body?.user?.maxPronouns ?? instanceLimits.maxPronouns;
+    instanceLimits.maxMessageLength = body?.message?.maxCharacters ?? instanceLimits.maxMessageLength;
+    instanceLimits.maxChannelName = body?.channel?.maxName ?? instanceLimits.maxChannelName;
+    instanceLimits.maxTopic = body?.channel?.maxTopic ?? instanceLimits.maxTopic;
+    instanceLimits.maxUsername = body?.user?.maxUsername ?? instanceLimits.maxUsername;
 }
 
 function boostPerks() {
@@ -588,6 +693,37 @@ function reactionEmojiInterceptor(payload: unknown) {
     return false;
 }
 
+// spacebar has no spoiler flag on attachments, so set discord's own one from the SPOILER_ filename
+const IS_SPOILER_FLAG = 1 << 3;
+const SPOILER_EVENTS = new Set([
+    "MESSAGE_CREATE", "MESSAGE_UPDATE", "LOCAL_MESSAGE_CREATE", "LOCAL_MESSAGES_LOADED",
+    "LOAD_MESSAGES_SUCCESS", "LOAD_MESSAGES_SUCCESS_CACHED", "LOAD_MESSAGES_AROUND_SUCCESS",
+    "LOAD_PINNED_MESSAGES_SUCCESS", "LOAD_RECENT_MENTIONS_SUCCESS", "SEARCH_MESSAGES_SUCCESS",
+    "LOAD_THREADS_SUCCESS", "LOAD_ARCHIVED_THREADS_SUCCESS", "THREAD_LIST_SYNC", "LOAD_FORUM_POSTS",
+    "FORUM_SEARCH_SUCCESS", "MESSAGE_PREVIEWS_LOADED", "SAVED_MESSAGES_UPDATE", "SAVED_MESSAGE_CREATE"
+]);
+
+function markSpoilerAttachments(value: unknown, depth: number) {
+    if (depth > 6 || value == null || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+        for (const item of value) markSpoilerAttachments(item, depth + 1);
+        return;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+        if (key === "attachments" && Array.isArray(child)) {
+            for (const attachment of child) {
+                if (typeof attachment?.filename === "string" && attachment.filename.startsWith("SPOILER_")) attachment.flags = (attachment.flags ?? 0) | IS_SPOILER_FLAG;
+            }
+        } else markSpoilerAttachments(child, depth + 1);
+    }
+}
+
+function spoilerInterceptor(payload: { type: string; }) {
+    if (getApiEndpoint() != null && SPOILER_EVENTS.has(payload.type)) markSpoilerAttachments(payload, 0);
+    return false;
+}
+
 const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 // ^ lowkey forgot what this does, dont remove unless yk what it is
 
@@ -669,6 +805,12 @@ function installFetchSanitiser() {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         const { pathname } = new URL(url, location.origin);
 
+        const auth = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get("authorization");
+        if (!isTokenAllowed(auth, url)) {
+            logger.warn(`Blocked a request carrying another backend's token: ${pathname}`);
+            throw new DOMException("Blocked a request carrying another backend's token", "AbortError");
+        }
+
         if (GUILD_PROFILE_URL_RE.test(pathname)) {
             const newUrl = url.replace(GUILD_PROFILE_URL_RE, "$1");
             logger.debug(`redirecting ${pathname} to the plain guild route, spacebar doesn't have a /profile endpoint`);
@@ -704,6 +846,9 @@ function uninstallFetchSanitiser() {
 
 let originalXHROpen: typeof XMLHttpRequest.prototype.open | null = null;
 let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
+let originalXHRSetHeader: typeof XMLHttpRequest.prototype.setRequestHeader | null = null;
+const xhrUrls = new WeakMap<XMLHttpRequest, string>();
+const blockedRequests = new WeakSet<XMLHttpRequest>();
 const flaggedGuildProfileRequests = new WeakSet<XMLHttpRequest>();
 const guildEditRequests = new WeakMap<XMLHttpRequest, string>();
 
@@ -760,11 +905,35 @@ function installXHRSanitiser() {
             url = withProvider.href;
         }
 
+        if (pendingLoginBackend) {
+            const current = apiBase();
+            const route = urlStr.startsWith(current) && urlStr.slice(current.length);
+            if (route && /^\/v\d+\/auth\//.test(route)) url = apiBase(pendingLoginBackend) + route;
+        }
+
+        xhrUrls.set(this, url instanceof URL ? url.href : url);
+        blockedRequests.delete(this);
         return Reflect.apply(OriginalOpen, this, [method, url, ...rest]);
+    };
+
+    const OriginalSetHeader = originalXHRSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function (name: string, value: string) {
+        const url = xhrUrls.get(this);
+        if (url && name.toLowerCase() === "authorization" && !isTokenAllowed(value, url)) {
+            logger.warn(`Blocked a request carrying another backend's token: ${new URL(url, location.origin).pathname}`);
+            blockedRequests.add(this);
+            return;
+        }
+        return OriginalSetHeader.call(this, name, value);
     };
 
     const OriginalSend = originalXHRSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
+        if (blockedRequests.has(this)) {
+            OriginalSend.call(this);
+            this.abort();
+            return;
+        }
         if (flaggedGuildProfileRequests.has(this)) {
             flaggedGuildProfileRequests.delete(this);
             if (typeof body === "string") body = stripGuildProfileOnlyFields(body);
@@ -785,6 +954,10 @@ function uninstallXHRSanitiser() {
     if (originalXHRSend) {
         XMLHttpRequest.prototype.send = originalXHRSend;
         originalXHRSend = null;
+    }
+    if (originalXHRSetHeader) {
+        XMLHttpRequest.prototype.setRequestHeader = originalXHRSetHeader;
+        originalXHRSetHeader = null;
     }
 }
 
@@ -898,6 +1071,132 @@ function saveAccountAvatar() {
 }
 
 const withHttps = (endpoint: string) => /^\w+:\/\//.test(endpoint) ? endpoint : "https:" + endpoint;
+
+// harmony rejects identify properties its schema doesn't list, and discord keeps adding new ones
+const IDENTIFY_PROPERTIES = new Set([
+    "os", "browser", "device", "$os", "$browser", "$device", "os_version", "os_arch", "os_sdk_version", "app_arch",
+    "browser_user_agent", "browser_version", "release_channel", "client_build_number", "native_build_number",
+    "client_event_source", "client_version", "system_locale", "has_client_mods", "client_launch_id", "launch_signature",
+    "client_heartbeat_session_id", "is_fast_connect", "gateway_connect_reasons",
+    "referrer", "referring_domain", "referrer_current", "referring_domain_current"
+]);
+
+// backend picked in the add account modal, only login requests go there until it succeeds
+let pendingLoginBackend: string | null = null;
+
+const apiBase = (backend?: string) => withHttps(getApiEndpoint(backend) ?? window.GLOBAL_ENV.API_ENDPOINT);
+const backendName = (id: string) => (PREDEFINED_SERVERS.find(s => s.id === id) ?? settings.store.customServers.find(s => s.id === id))?.name ?? id;
+
+function reloadOnBackend(id: string) {
+    if (id === connectedBackend && settings.store.backend === id) return;
+    if (!hasEndpoints(id)) {
+        showToast({ text: `${backendName(id)} has no API or gateway set.`, variant: "critical" });
+        return;
+    }
+    confirmDiscordReload(id, () => {
+        prepareTokenForBackend(id);
+        settings.store.backend = id;
+        location.reload();
+    });
+}
+
+const DiscordSwitchPrompt = ErrorBoundary.wrap(function ({ onChange }: { onChange(value: boolean): void; }) {
+    const [dontAsk, setDontAsk] = useState(false);
+    return (
+        <>
+            <Text size="md" weight="normal">Discord runs without any ChangeEndpoint patches, so switching to or from it reloads the client.</Text>
+            <FormSwitch title="Don't ask again" value={dontAsk} onChange={value => { setDontAsk(value); onChange(value); }} hideBorder />
+        </>
+    );
+}, { noop: true });
+
+function confirmDiscordReload(target: string, reload: () => void) {
+    if (!settings.store.confirmDiscordSwitch || (!onDiscord && target !== "discord")) return reload();
+    let dontAsk = false;
+    Alerts.show({
+        title: `Switch to ${backendName(target)}?`,
+        body: <DiscordSwitchPrompt onChange={value => dontAsk = value} />,
+        confirmText: "Switch and Reload",
+        cancelText: "Cancel",
+        onConfirm: () => {
+            if (dontAsk) settings.store.confirmDiscordSwitch = false;
+            reload();
+        }
+    });
+}
+
+const canSwitchInPlace = (id: string) =>
+    !onDiscord && id !== "discord" && id !== connectedBackend && hasEndpoints(id) && getCdnHost(id) != null;
+
+function applyBackendInPlace(id: string) {
+    logger.info(`Switching to ${backendName(id)} without a reload`);
+    settings.store.backend = id;
+    captureConnectedBackend(id);
+    writeEndpointEnv(window.GLOBAL_ENV);
+    envRefreshers.forEach(refresh => refresh());
+    const socket = GatewayConnectionStore.getSocket();
+    socket.resumeUrl = socket.sessionId = null;
+
+    const syncing = dmPollingStarted;
+    stopGuildOrderSync();
+    stopDMUnreadPoll();
+    releaseVoiceState();
+    releaseSeekableMedia();
+    answeredListChannels.clear();
+    realGuildFeatures.clear();
+    notMembers.clear();
+    queuedMembers.clear();
+    if (memberListResync) clearTimeout(memberListResync);
+    memberListResync = null;
+    lastSignature = null;
+    pendingLoginBackend = null;
+    instanceInfo = null;
+    gifProviders = [];
+    if (!syncing) return;
+    startGuildOrderSync();
+    startDMUnreadPoll();
+}
+
+function switchBackendTo(id: string) {
+    if (!canSwitchInPlace(id)) return reloadOnBackend(id);
+
+    const accounts = MultiAccountStore.getUsers().filter(u => settings.store.accountBackends[u.id] === id && TokenStorage.getToken(u.id));
+    if (accounts.length === 1) return void switchToAccount(accounts[0].id);
+
+    prepareTokenForBackend(id);
+    applyBackendInPlace(id);
+    FluxDispatcher.dispatch({ type: "LOGOUT", isSwitchingAccount: true, userId: AuthenticationStore.getId() });
+}
+
+function openAccountOn(userId: string, token: string, backend: string) {
+    settings.store.accountBackends = { ...settings.plain.accountBackends, [userId]: backend };
+    if (backend === connectedBackend) return void switchToAccount(userId);
+    if (canSwitchInPlace(backend)) {
+        applyBackendInPlace(backend);
+        return void switchToAccount(userId);
+    }
+    confirmDiscordReload(backend, () => {
+        TokenStorage.setToken(token, userId);
+        settings.store.backend = backend;
+        location.reload();
+    });
+}
+
+const AddAccountBackendButton = ErrorBoundary.wrap(function ({ openMenu }: { openMenu(e: React.MouseEvent, onSelect: (id: string) => void, selected: string | null): void; }) {
+    const [pending, setPending] = useState(pendingLoginBackend);
+    useEffect(() => () => { pendingLoginBackend = null; }, []);
+
+    return (
+        <Button
+            type="button"
+            size="small"
+            variant="secondary"
+            onClick={e => openMenu(e, id => onDiscord || id === "discord" ? reloadOnBackend(id) : setPending(pendingLoginBackend = id === connectedBackend ? null : id), pending ?? connectedBackend)}
+        >
+            {pending ? `Backend: ${backendName(pending)}` : "Switch Backend"}
+        </Button>
+    );
+}, { noop: true });
 
 const GIF_API_RE = /\/gifs\/(?:search|trending|trending-gifs|suggest|trending-search)$/;
 const GIF_PROVIDER_NAMES: Record<string, string> = { klipy: "Klipy", giphy: "GIPHY", tenor: "Tenor" };
@@ -1135,6 +1434,28 @@ function AccountSwitcherMenu({ onClose }: { onClose(): void; }) {
     );
 }
 
+function bootsOnDiscord() {
+    const backend: string | undefined = Settings.plugins.ChangeEndpoint?.backend;
+    const customServers: CustomServer[] = Settings.plugins.ChangeEndpoint?.customServers ?? [];
+    if (backend == null || backend === "discord") return backend === "discord";
+    if (PREDEFINED_SERVERS.some(s => s.id === backend)) return false;
+    const custom = customServers.find(s => s.id === backend);
+    return !(custom?.type === "simple" ? custom.host?.trim() : custom?.apiEndpoint?.trim() && custom.gatewayEndpoint?.trim());
+}
+
+const onDiscord = bootsOnDiscord();
+
+const DISCORD_SAFE_PATCHES = new Set([
+    "Switching accounts failed because there was no token",
+    'navId:"manage-multi-account"',
+    'id:"manage-accounts"',
+    ".getIsValidatingUsers(),multiAccountUsers:",
+    "#{intl::SWITCH_ACCOUNTS_CHOOSE_ACCOUNT_HELPER})",
+    "username webauthn",
+    '#{intl::BACK}),type:"button"',
+    "--connecting-container-fade-duration"
+]);
+
 export default definePlugin({
     name: "ChangeEndpoint",
     description: "Redirects Discord API, CDN and gateway traffic to a Spacebar backend.",
@@ -1174,18 +1495,17 @@ export default definePlugin({
         return item.url;
     },
 
-    renderSpoilerVideo(item: { originalItem?: { url?: string; filename?: string; size?: number; }; downloadUrl?: string; }, maxWidth: number, maxHeight: number) {
+    renderVideoAttachment({ item, className, ...size }: { item: { originalItem?: { url?: string; filename?: string; size?: number; }; downloadUrl?: string; }; maxWidth?: number; maxHeight?: number; className?: string; }) {
         const src = item.originalItem?.url ?? item.downloadUrl ?? "";
-        const video = settings.store.useChromiumVideoPlayer
-            ? <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />
-            : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />;
-
-        return this.wrapSpoiler(item, video);
-    },
-
-    wrapSpoiler(item: { originalItem?: { filename?: string; }; }, node: ReactNode) {
-        if (!item.originalItem?.filename?.startsWith("SPOILER_")) return node;
-        return <DiscordSpoiler>{node}</DiscordSpoiler>;
+        const maxWidth = size.maxWidth || 640;
+        const maxHeight = size.maxHeight || 400;
+        return (
+            <div className={className}>
+                {settings.store.useChromiumVideoPlayer
+                    ? <video src={src} controls preload="metadata" style={{ maxWidth, maxHeight, width: "100%" }} />
+                    : <CustomVideoPlayer src={src} maxWidth={maxWidth} maxHeight={maxHeight} fileName={item.originalItem?.filename} fileSizeBytes={item.originalItem?.size} />}
+            </div>
+        );
     },
 
     fixUploadSpoiler(upload: { filename: string; spoiler: boolean; }) {
@@ -1231,21 +1551,40 @@ export default definePlugin({
     // maybe i could complicate this and have it half reload? client takes a while to initially
     // start up, faster switch times would be nicer
     switchBackend(id: string) {
-        settings.store.backend = id;
-        location.reload();
+        switchBackendTo(id);
     },
 
-    openBackendMenu(e: React.MouseEvent) {
+    canSwitchInPlace(id: string) {
+        return canSwitchInPlace(id);
+    },
+
+    openBackendMenu(e: React.MouseEvent, onSelect = (id: string) => this.switchBackend(id), selected = connectedBackend) {
         const custom = settings.store.customServers;
+        const item = (s: { id: string; name: string; }) => {
+            const usable = hasEndpoints(s.id);
+            return (
+                <Menu.MenuItem
+                    key={s.id}
+                    id={s.id}
+                    label={s.name}
+                    subtext={usable ? undefined : "No API or gateway set"}
+                    disabled={!usable}
+                    icon={s.id === selected ? SelectedBackendIcon : undefined}
+                    action={() => s.id !== selected && onSelect(s.id)}
+                />
+            );
+        };
         ContextMenuApi.openContextMenu(e, () => (
             <Menu.Menu navId="change-endpoint-switch-backend" onClose={ContextMenuApi.closeContextMenu}>
-                {PREDEFINED_SERVERS.map(s => (
-                    <Menu.MenuItem key={s.id} id={s.id} label={s.name} action={() => this.switchBackend(s.id)} />
-                ))}
+                {PREDEFINED_SERVERS.map(item)}
                 {custom.length > 0 && <Menu.MenuSeparator />}
-                {custom.map(s => (
-                    <Menu.MenuItem key={s.id} id={s.id} label={s.name} action={() => this.switchBackend(s.id)} />
-                ))}
+                {custom.map(item)}
+                {UserStore.getCurrentUser() && (
+                    <>
+                        <Menu.MenuSeparator />
+                        <Menu.MenuItem id="manage-backends" label="Manage Backends" action={() => SettingsRouter.openUserSettings("equicord_change_endpoint_panel")} />
+                    </>
+                )}
             </Menu.Menu>
         ));
     },
@@ -1278,9 +1617,15 @@ export default definePlugin({
     },
 
     renderGuildGuidelines() {
-        const server = serverWithCodeOfConduct();
-        if (!server?.codeOfConduct) return null;
-        return <>By creating a {settings.store.guildTerminology ? "guild" : "server"}, you agree to {server.name}'s <strong><MaskedLink href={server.codeOfConduct}>Code of Conduct</MaskedLink></strong>.</>;
+        const terms = httpUrl(instanceInfo?.tosPage);
+        const link = terms ?? serverWithCodeOfConduct()?.codeOfConduct;
+        if (!link) return null;
+        return <>By creating a {settings.store.guildTerminology ? "guild" : "server"}, you agree to {backendName(connectedBackend ?? settings.store.backend)}'s <strong><MaskedLink href={link}>{terms ? "Terms" : "Code of Conduct"}</MaskedLink></strong>.</>;
+    },
+
+    instanceInfo() {
+        if (settings.store.backend !== connectedBackend || !instanceInfo) return null;
+        return { ...instanceInfo, frontPage: httpUrl(instanceInfo.frontPage), tosPage: httpUrl(instanceInfo.tosPage) };
     },
 
     reorderChannelsForSpacebar(guildId: string, updates: ChannelPositionUpdate[]) {
@@ -1325,6 +1670,48 @@ export default definePlugin({
         return instanceLimits.maxEmojis;
     },
 
+    onEnvChange(refresh: () => void) {
+        envRefreshers.push(refresh);
+    },
+
+    maxBio() {
+        return instanceLimits.maxBio;
+    },
+
+    maxPronouns() {
+        return instanceLimits.maxPronouns;
+    },
+
+    maxMessageLength() {
+        return instanceLimits.maxMessageLength;
+    },
+
+    maxChannelName() {
+        return instanceLimits.maxChannelName;
+    },
+
+    maxTopic() {
+        return instanceLimits.maxTopic;
+    },
+
+    sanitizeChannelName(name: string) {
+        const guildId = SelectedGuildStore.getGuildId();
+        const features: ReadonlySet<string> | undefined = guildId ? GuildStore.getGuild(guildId)?.features : undefined;
+        if (renamingChannel || features?.has("ALLOW_INVALID_CHANNEL_NAMES")) return name;
+        return name.replace(/[\s-]+/g, "-").replace(/^-+/, "");
+    },
+
+    renameChannel(sanitize: () => string) {
+        renamingChannel = true;
+        const name = sanitize();
+        renamingChannel = false;
+        return name;
+    },
+
+    maxUsername() {
+        return instanceLimits.maxUsername;
+    },
+
     maxStickers() {
         return instanceLimits.maxStickers;
     },
@@ -1347,8 +1734,8 @@ export default definePlugin({
         return { ...presence, status: "offline" };
     },
 
-    identifyProperties({ client_app_state, device_model_name, ...properties }: Record<string, unknown>) {
-        return properties;
+    identifyProperties(properties: Record<string, unknown>) {
+        return Object.fromEntries(Object.entries(properties).filter(([key]) => IDENTIFY_PROPERTIES.has(key)));
     },
 
     orderGuildSubscriptions(subscriptions: Record<string, { channels?: Record<string, unknown>; }>) {
@@ -1430,7 +1817,8 @@ export default definePlugin({
     },
 
     isLinkedElsewhere(userId: string) {
-        return getLinkedBackend(userId) != null;
+        if (!connectedBackend) captureConnectedBackend(onDiscord ? "discord" : undefined);
+        return (settings.store.accountBackends[userId] ?? (onDiscord ? "discord" : undefined)) !== connectedBackend;
     },
 
     markTokenValid(userId: string) {
@@ -1438,13 +1826,38 @@ export default definePlugin({
     },
 
     switchAccountBackend(userId: string) {
-        const backend = getLinkedBackend(userId);
-        const token = backend && TokenStorage.getToken(userId);
-        if (!backend || !token) return false;
+        if (!connectedBackend) captureConnectedBackend(onDiscord ? "discord" : undefined);
+        const token = TokenStorage.getToken(userId);
+        if (!token || !connectedBackend || !this.isLinkedElsewhere(userId)) return false;
 
-        TokenStorage.setToken(token, userId);
-        settings.store.backend = backend;
-        location.reload();
+        const backend = getLinkedBackend(userId);
+        if (backend && canSwitchInPlace(backend)) {
+            applyBackendInPlace(backend);
+            return false;
+        }
+        if (backend) {
+            openAccountOn(userId, token, backend);
+            return true;
+        }
+
+        const backends = [...PREDEFINED_SERVERS, ...settings.store.customServers].filter(s => hasEndpoints(s.id));
+        Alerts.show({
+            title: "Which backend is this account from?",
+            body: (
+                <>
+                    <Text size="md" weight="normal">ChangeEndpoint doesn't know where this account was made. Its token gets sent to whichever backend you pick, so only pick the one it really belongs to.</Text>
+                    <div className="vc-endpoint-backend-picker">
+                        {backends.map(s => (
+                            <Button key={s.id} variant={s.id === connectedBackend ? "primary" : "secondary"} onClick={() => openAccountOn(userId, token, s.id)}>
+                                {s.name}
+                            </Button>
+                        ))}
+                    </div>
+                </>
+            ),
+            confirmText: "Cancel",
+            confirmVariant: "secondary"
+        });
         return true;
     },
 
@@ -1463,6 +1876,36 @@ export default definePlugin({
                 Switch Backend
             </Button>
         );
+    },
+
+    renderAddAccountBackendButton() {
+        return <AddAccountBackendButton openMenu={(e, onSelect, selected) => this.openBackendMenu(e, onSelect, selected)} />;
+    },
+
+    hasPendingLoginBackend() {
+        return pendingLoginBackend != null;
+    },
+
+    async addAccountOnPendingBackend(token: string, finishSwitch: () => Promise<boolean>) {
+        const backend = pendingLoginBackend;
+        if (!backend) return false;
+
+        const res = await fetch(`${apiBase(backend)}/v9/users/@me`, { headers: { authorization: token } }).catch(() => null);
+        if (!res?.ok) {
+            showToast({ text: `Logged in, but ${backendName(backend)} wouldn't confirm the account. Try again.`, variant: "critical" });
+            return false;
+        }
+
+        const { id }: { id: string; } = await res.json();
+        settings.store.accountBackends = { ...settings.plain.accountBackends, [id]: backend };
+        if (canSwitchInPlace(backend)) {
+            applyBackendInPlace(backend);
+            return finishSwitch();
+        }
+        TokenStorage.setToken(token, id);
+        settings.store.backend = backend;
+        location.reload();
+        return true;
     },
 
     renderLoginSwitchBackendButton() {
@@ -1502,13 +1945,23 @@ export default definePlugin({
     },
 
     onBeforeMessageSend(_, msg) {
+        if (onDiscord) return;
         msg.content = msg.content.replace(TENOR_MEDIA1_URL, "https://media.tenor.com/$1");
     },
 
-    flux: {
+    flux: onDiscord ? {
         CONNECTION_OPEN() {
+            linkCurrentAccount();
+            saveAccountAvatar();
+        },
+        CURRENT_USER_UPDATE: saveAccountAvatar
+    } : {
+        CONNECTION_OPEN() {
+            linkCurrentAccount();
             saveAccountAvatar();
             loadGifProviders();
+            loadInstanceLimits().catch(e => logger.warn("Couldn't load instance limits, using Spacebar's defaults", e));
+            loadInstanceInfo().catch(e => logger.warn("Couldn't load instance info", e));
         },
         CURRENT_USER_UPDATE: saveAccountAvatar,
 
@@ -1521,6 +1974,7 @@ export default definePlugin({
         },
 
         CHANNEL_SELECT({ guildId, channelId }: { guildId?: string; channelId?: string; }) {
+            expireSeekableMedia(channelId);
             if (getApiEndpoint() == null || !guildId || !channelId || answeredListChannels.get(guildId) === channelId) return;
             requestMemberList(guildId, channelId);
         },
@@ -1585,25 +2039,13 @@ export default definePlugin({
         migrateVideoPlayerSetting();
         migrateDefaultBackend();
         migrateCustomServers();
-        captureConnectedBackend();
-        saveAccountAvatar();
-        loadGifProviders();
-        startGuildOrderSync();
-        startDMUnreadPoll();
-        installFetchSanitiser();
-        installXHRSanitiser();
-        installBoostPerkUnlocker();
-        loadInstanceLimits().catch(e => logger.warn("Couldn't load instance limits, using Spacebar's defaults", e));
-        installGatewaySendSanitiser();
-        installDaveClientConnectGuard();
-        FluxDispatcher.addInterceptor(reactionEmojiInterceptor);
-        FluxDispatcher.addInterceptor(memberListInterceptor);
-        if (settings.store.ignoreEmailVerification) {
-            const user = UserStore.getCurrentUser();
-            if (user) user.verified = true;
-            FluxDispatcher.addInterceptor(emailVerificationInterceptor);
+        captureConnectedBackend(onDiscord ? "discord" : undefined);
+        if (onDiscord && settings.store.backend !== "discord") {
+            logger.warn(`${backendName(settings.store.backend)} has no API or gateway set, staying on Discord`);
+            showToast({ text: `${backendName(settings.store.backend)} has no API or gateway set, so ChangeEndpoint stayed on Discord.`, variant: "critical" });
         }
-        installActivityUnfilter();
+        linkCurrentAccount();
+        saveAccountAvatar();
 
         SettingsPlugin.customEntries.push({
             key: "equicord_change_endpoint",
@@ -1611,6 +2053,29 @@ export default definePlugin({
             Component: require("./components/EndpointTab").default,
             Icon: WebsiteIcon
         });
+
+        if (onDiscord) return;
+
+        loadGifProviders();
+        startGuildOrderSync();
+        startDMUnreadPoll();
+        installFetchSanitiser();
+        installXHRSanitiser();
+        installBoostPerkUnlocker();
+        loadInstanceLimits().catch(e => logger.warn("Couldn't load instance limits, using Spacebar's defaults", e));
+        loadInstanceInfo().catch(e => logger.warn("Couldn't load instance info", e));
+        installGatewaySendSanitiser();
+        installDaveClientConnectGuard();
+        FluxDispatcher.addInterceptor(reactionEmojiInterceptor);
+        FluxDispatcher.addInterceptor(spoilerInterceptor);
+        FluxDispatcher.addInterceptor(memberListInterceptor);
+        document.addEventListener("play", makeMediaSeekable, true);
+        if (settings.store.ignoreEmailVerification) {
+            const user = UserStore.getCurrentUser();
+            if (user) user.verified = true;
+            FluxDispatcher.addInterceptor(emailVerificationInterceptor);
+        }
+        installActivityUnfilter();
 
         if (typeof DiscordNative === "undefined") return;
 
@@ -1634,6 +2099,8 @@ export default definePlugin({
     },
 
     stop() {
+        removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
+        if (onDiscord) return;
         stopGuildOrderSync();
         stopDMUnreadPoll();
         uninstallFetchSanitiser();
@@ -1643,11 +2110,13 @@ export default definePlugin({
         releaseVoiceState();
         removeInterceptor(boostPerkInterceptor);
         removeInterceptor(reactionEmojiInterceptor);
+        removeInterceptor(spoilerInterceptor);
         removeInterceptor(memberListInterceptor);
+        document.removeEventListener("play", makeMediaSeekable, true);
+        releaseSeekableMedia();
         removeInterceptor(emailVerificationInterceptor);
         removeInterceptor(goLiveInterceptor);
         uninstallActivityUnfilter();
-        removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
 
         if (originalPermissionsQuery) {
             navigator.permissions.query = originalPermissionsQuery;
@@ -1784,39 +2253,61 @@ export default definePlugin({
             }
         },
         {
-            find: "window.GLOBAL_ENV.API_ENDPOINT",
-            all: true,
-            predicate: () => getApiEndpoint() != null,
+            find: "_getGatewayUrl(){",
             replacement: {
-                match: /window\.GLOBAL_ENV\.API_ENDPOINT/g,
-                replace: () => JSON.stringify(getApiEndpoint())
+                match: /(?<=_getGatewayUrl\(\)\{return null!=this\.resumeUrl\?this\.resumeUrl:)\i(?=\})/,
+                replace: "window.GLOBAL_ENV.GATEWAY_ENDPOINT"
             }
         },
         {
-            find: "window.GLOBAL_ENV.CDN_HOST",
-            all: true,
-            predicate: () => getCdnHost() != null,
+            find: /ASSET_ENDPOINT:\i,CDN_HOST:\i\}=window\.GLOBAL_ENV/,
             replacement: {
-                match: /window\.GLOBAL_ENV\.CDN_HOST/g,
-                replace: () => JSON.stringify(getCdnHost())
+                match: /\{API_ENDPOINT:\i,MEDIA_PROXY_ENDPOINT:.{0,500}?"ig"\),\i=RegExp\(.{0,100}?"ig"\)/,
+                replace: (chain: string) => refreshOnEnvChange(chain)
             }
         },
         {
-            find: "window.GLOBAL_ENV.GATEWAY_ENDPOINT",
+            find: "/role-icons`",
             all: true,
-            predicate: () => getGatewayEndpoint() != null,
             replacement: {
-                match: /window\.GLOBAL_ENV\.GATEWAY_ENDPOINT/g,
-                replace: () => JSON.stringify(getGatewayEndpoint())
+                match: /\i=`\$\{location\.protocol\}\/\/\$\{window\.GLOBAL_ENV\.CDN_HOST\}\/role-icons`,\i=`\$\{location\.protocol\}\$\{window\.GLOBAL_ENV\.API_ENDPOINT\}`/,
+                replace: (chain: string) => refreshOnEnvChange(chain)
             }
         },
         {
-            find: "window.GLOBAL_ENV.MEDIA_PROXY_ENDPOINT",
-            all: true,
-            predicate: () => getMediaProxyEndpoint() != null,
+            find: "/app-assets/application-directory/collection-items/",
             replacement: {
-                match: /window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT/g,
-                replace: () => JSON.stringify(getMediaProxyEndpoint())
+                match: /(?<=\(\d+\);let)\{API_ENDPOINT:\i,CDN_HOST:\i\}=window\.GLOBAL_ENV(?=;)/,
+                replace: (chain: string) => refreshOnEnvChange(chain)
+            }
+        },
+        {
+            find: "MEDIA_PROXY_ENDPOINT?.substring(2)]",
+            replacement: {
+                match: /\i=\[window\.GLOBAL_ENV\.CDN_HOST,window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT\?\.substring\(2\)\]\.map\(\i\.\i\)\.filter\(\i=>null!=\i&&""!==\i\)/,
+                replace: (chain: string) => refreshOnEnvChange(chain)
+            }
+        },
+        {
+            find: '"MaskedLinkStore"',
+            replacement: {
+                match: /\i=window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT\?\.replace\("\/\/",""\)/,
+                replace: (chain: string) => refreshOnEnvChange(chain)
+            }
+        },
+        {
+            find: "toURLSafe(window.GLOBAL_ENV.API_ENDPOINT)",
+            all: true,
+            replacement: {
+                match: /\i=\i\.\i\.toURLSafe\(window\.GLOBAL_ENV\.API_ENDPOINT\)\?\.host\?\?"localhost"/,
+                replace: (chain: string) => refreshOnEnvChange(chain)
+            }
+        },
+        {
+            find: "window.GLOBAL_ENV.GUILD_TEMPLATE_HOST]);",
+            replacement: {
+                match: /\i=new Set\(\[window\.GLOBAL_ENV\.CDN_HOST,window\.GLOBAL_ENV\.INVITE_HOST,window\.GLOBAL_ENV\.GIFT_CODE_HOST,window\.GLOBAL_ENV\.GUILD_TEMPLATE_HOST\]\)/,
+                replace: (chain: string) => refreshOnEnvChange(chain)
             }
         },
         {
@@ -1848,35 +2339,6 @@ export default definePlugin({
             replacement: {
                 match: /role:"tablist","aria-label":[^,]{0,60},children:\[(\i),/,
                 replace: "$&$self.renderGifProviderTabs($1),"
-            }
-        },
-        {
-            find: "}=window.GLOBAL_ENV",
-            all: true,
-            replacement: {
-                match: /\{([\w:,]+)\}=window\.GLOBAL_ENV/g,
-                replace: (fullMatch: string, pairsStr: string) => {
-                    const overrides: Record<string, string | null> = {
-                        API_ENDPOINT: getApiEndpoint(),
-                        CDN_HOST: getCdnHost(),
-                        GATEWAY_ENDPOINT: getGatewayEndpoint(),
-                        MEDIA_PROXY_ENDPOINT: getMediaProxyEndpoint()
-                    };
-                    const keysPresent = pairsStr.split(",")
-                        .map(pair => pair.split(":")[0])
-                        .filter(key => overrides[key]);
-
-                    if (keysPresent.length === 0) return fullMatch;
-
-                    const overrideObjLiteral = "{" +
-                        keysPresent.map(key => `${key}:${JSON.stringify(overrides[key])}`).join(",") +
-                        "}";
-
-                    return fullMatch.replace(
-                        "window.GLOBAL_ENV",
-                        `Object.assign({},window.GLOBAL_ENV,${overrideObjLiteral})`
-                    );
-                }
             }
         },
         {
@@ -2002,56 +2464,8 @@ export default definePlugin({
         {
             find: 'case"VIDEO":case"CLIP":return(0,',
             replacement: {
-                match: /case"VIDEO":case"CLIP":return\(0,\i\.\i\)\(\i,\{item:(\i),[^}]{0,400}?maxWidth:(\i),maxHeight:(\i)[^}]{0,300}\}\)/,
-                replace: 'case"VIDEO":case"CLIP":return $self.renderSpoilerVideo($1,$2||640,$3||400)',
-                fallbacks: [{
-                    match: /case"VIDEO":case"CLIP":return\(0,\i\.\i\)\(\i,(\{item:\i,[^}]{0,800}\})\)/,
-                    replace: 'case"VIDEO":case"CLIP":return(vcProps=>$self.renderSpoilerVideo(vcProps.item,vcProps.maxWidth||640,vcProps.maxHeight||400))($1)'
-                }]
-            }
-        },
-        {
-            find: 'case"IMAGE":return(0,',
-            replacement: {
-                match: /case"IMAGE":return\(0,\i\.\i\)\(\i\.\i\.Consumer,\{children:\i=>(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))\}\)/,
-                replace: (match: string, call: string, item: string) =>
-                    match.replace(call, `$self.wrapSpoiler(${item},${call})`)
-            }
-        },
-        {
-            find: 'case"AUDIO":return(0,',
-            replacement: {
-                match: /case"AUDIO":return(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))/,
-                replace: (match: string, call: string, item: string) =>
-                    `case"AUDIO":return $self.wrapSpoiler(${item},${call})`
-            }
-        },
-        {
-            find: 'case"PLAINTEXT_PREVIEW":return(0,',
-            replacement: {
-                match: /case"PLAINTEXT_PREVIEW":return(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))/,
-                replace: (match: string, call: string, item: string) =>
-                    `case"PLAINTEXT_PREVIEW":return $self.wrapSpoiler(${item},${call})`
-            }
-        },
-        {
-            find: 'case"OTHER":return(0,',
-            replacement: {
-                match: /case"OTHER":return(\(0,\i\.\i\)\(\i,\{item:(\i),[^}]*\}\))/,
-                replace: (match: string, call: string, item: string) =>
-                    `case"OTHER":return $self.wrapSpoiler(${item},${call})`
-            }
-        },
-        {
-            find: 'case"PLAINTEXT_PREVIEW":return(0,',
-            retry: true,
-            replacement: {
-                match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
-                replace: 'spoiler:($2.filename??$2.originalItem?.filename)?.startsWith("SPOILER_")||$1',
-                /*
-                    might not be functional? i get a warning about this in logs, pretty sure the other
-                    stuff is patching spoilers, not this
-                */
+                match: /case"VIDEO":case"CLIP":return\(0,\i\.\i\)\(\i,(\{item:\i,[^}]{0,800}\})\)/,
+                replace: 'case"VIDEO":case"CLIP":return $self.renderVideoAttachment($1)'
             }
         },
         {
@@ -2124,7 +2538,6 @@ export default definePlugin({
         {
             find: "#{intl::CREATE_SERVER_GUIDELINES},{guidelinesURL:",
             retry: true,
-            predicate: () => serverWithCodeOfConduct() != null,
             replacement: {
                 match: /\i\.intl\.format\(\i\.t#{intl::CREATE_SERVER_GUIDELINES},\{guidelinesURL:[^}]{0,40}\}\)/,
                 replace: "$self.renderGuildGuidelines()"
@@ -2133,7 +2546,6 @@ export default definePlugin({
         {
             find: ".terms,{guidelinesURL:",
             retry: true,
-            predicate: () => serverWithCodeOfConduct() != null,
             replacement: {
                 match: /\i\.intl\.format\(\i\.terms,\{guidelinesURL:[^}]{0,40}\}\)/,
                 replace: "$self.renderGuildGuidelines()"
@@ -2189,10 +2601,80 @@ export default definePlugin({
             ]
         },
         {
-            find: "VideoInput: Already destroyed",
+            find: /canUseIncreasedMessageLength\(\i\.getCurrentUser\(\)\)\?4e3:2e3/,
             replacement: {
-                match: /(?<=\i\.some\(\i=>\i\.id===this\.sourceId\)&&\()(\i)\.deviceId=this\.sourceId(?=\))/,
-                replace: "$1.deviceId={exact:this.sourceId}"
+                match: /\i\.\i\.canUseIncreasedMessageLength\(\i\.getCurrentUser\(\)\)\?4e3:2e3/,
+                replace: "($&,$self.maxMessageLength())"
+            }
+        },
+        {
+            find: /THREADS\.has\(\i\)\?\(0,\i\.\i\)\(\i,!1\):\i\.\i\.LIMITED_CHANNEL_NAME\.has\(/,
+            replacement: {
+                match: /(?<=LIMITED_CHANNEL_NAME\.has\(\i\)\?)\(0,\i\.\i\)\((\i)\)/,
+                replace: "$self.sanitizeChannelName($1)"
+            }
+        },
+        {
+            find: "onChange:this.handleNameChange,inputRef:this.setInputRef",
+            replacement: {
+                match: /(?<=onChange:this\.handleNameChange,inputRef:this\.setInputRef,maxLength:)100(?=,)/,
+                replace: "$self.maxChannelName()"
+            }
+        },
+        {
+            find: 'name:"discriminator","aria-label"',
+            replacement: {
+                match: /(?<=name:"username",value:\i,maxLength:)32(?=,)/,
+                replace: "$self.maxUsername()"
+            }
+        },
+        {
+            find: "onChange:this.handleChangeRichTopic",
+            replacement: [
+                {
+                    match: /(?<=handleChangeName=\i=>\{.{0,60}?\i=)\(0,\i\.\i\)\(\i,\i\.type\)/,
+                    replace: "$self.renameChannel(()=>$&)"
+                },
+                {
+                    match: /(?<=onChange:this\.handleChangeName,onBlur:this\.handleBlurName,.{0,120}?maxLength:)100/,
+                    replace: "$self.maxChannelName()"
+                },
+                {
+                    match: /(?<=maxCharacterCount:\i\?4096:)1024(?=,onChange:this\.handleChangeRichTopic)/,
+                    replace: "$self.maxTopic()"
+                }
+            ]
+        },
+        {
+            find: "EMPTY_MESSAGE});let",
+            replacement: {
+                match: /(?<=let \i=)\i\?4e3:2e3(?=;if\(\i\.length>\i\))/,
+                replace: "($&,$self.maxMessageLength())"
+            }
+        },
+        {
+            find: '"2026-08-user-bio-max-length"',
+            replacement: {
+                match: /\i\.(?:useConfig|getConfig)\(\{location:\i\}\)\.maxLength/g,
+                replace: "($&,$self.maxBio())"
+            }
+        },
+        {
+            find: /currentPronouns:\i,disabled:\i=!1\}=\i/,
+            replacement: {
+                match: /(?<=currentPronouns:.{0,300}?maxLength:)40(?=,value:)/,
+                replace: "$self.maxPronouns()"
+            }
+        },
+        {
+            find: "isCurrentSource(",
+            replacement: {
+                match: /(?<=\.some\(\i=>\i\.id===(\i)\)&&\(\i\.deviceId=)\1(?=\))/,
+                replace: "{exact:$1}",
+                fallbacks: [{
+                    match: /(?<=\i\.some\(\i=>\i\.id===this\.sourceId\)&&\()(\i)\.deviceId=this\.sourceId(?=\))/,
+                    replace: "$1.deviceId={exact:this.sourceId}"
+                }]
             }
         },
         {
@@ -2338,10 +2820,10 @@ export default definePlugin({
             }
         },
         {
-            find: '"0M5fN7"])',
+            find: "#{intl::SWITCH_ACCOUNTS_CHOOSE_ACCOUNT_HELPER})",
             retry: true,
             replacement: {
-                match: /(children:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",textVariant:"body-sm\/medium",text:\i\.intl\.string\(\i\.\i\["9g2mqT"\]\),onClick:\i\}\)\}\))\]\}\)\}/,
+                match: /(children:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",textVariant:"body-sm\/medium",text:\i\.intl\.string\(\i\.\i#{intl::SWITCH_ACCOUNTS_ADD_AN_ACCOUNT_BUTTON}\),onClick:\i\}\)\}\))\]\}\)\}/,
                 replace: "$1,$self.renderLoginSwitchBackendButton()]})}"
             }
         },
@@ -2349,22 +2831,33 @@ export default definePlugin({
             find: "username webauthn",
             retry: true,
             replacement: {
-                match: /(\i&&\i)&&\(0,(\i)\.jsx\)\("div",\{className:(\i\.\i),children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
+                match: /(\i&&\i)&&\(0,(\i)\.jsx\)\("div",\{className:(\i\.\i),children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.\i#{intl::AGE_GATE_GO_BACK}\),icon:\i\.\i\}\))\}\)/,
                 replace: "(0,$2.jsxs)(\"div\",{className:$3,style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$1&&$4,$self.renderLoginSwitchBackendButton()]})"
             }
         },
         {
-            find: '"13/7kX"]),type:"button"',
+            find: '#{intl::BACK}),type:"button"',
             retry: true,
             replacement: {
-                match: /(?<=leading:)\(0,(\i)\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:\i,text:\i\.intl\.string\(\i\.\i\["13\/7kX"\]\),type:"button"\}\)/,
-                replace: '(0,$1.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderSwitchBackendButton(),$&]})'
+                match: /(?<=leading:)\(0,(\i)\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:\i,text:\i\.intl\.string\(\i\.\i#{intl::BACK}\),type:"button"\}\)/,
+                replace: '(0,$1.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderAddAccountBackendButton(),$&]})'
+            }
+        },
+        {
+            find: '"Switched accounts finished"',
+            replacement: {
+                match: /switchAccountToken\((\i)\)\{/,
+                replace: "$&if($self.hasPendingLoginBackend())return $self.addAccountOnPendingBackend($1,()=>this.switchAccountToken($1));",
+                fallbacks: [{
+                    match: /switchAccountToken\((\i)[^)]{0,20}\)\{/,
+                    replace: "$&if($self.hasPendingLoginBackend())return $self.addAccountOnPendingBackend($1,()=>this.switchAccountToken($1));"
+                }]
             }
         },
         {
             find: "--connecting-container-fade-duration",
             replacement: {
-                match: /(\(0,\i\.jsxs\)\("div",\{className:\i\(\)\(\i\.Bk,\{\[\i\.ly\]:this\.state\.problems\}\),children:\[\(0,\i\.jsx\)\("div",\{className:\i\.u1,children:\i\.intl\.string\(\i\.t\.AG2zPM\)\}\),\(0,\i\.jsxs\)\("div",\{children:\[\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.AR,href:\i\.\i\.TWITTER_SUPPORT,target:"_blank",children:\[\(0,\i\.jsx\)\(\i\.\i,\{size:"xs",color:"currentColor",className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\),\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.gy,href:\i\.\i\.STATUS,target:"_blank",children:\[\(0,\i\.jsx\)\(\i,\{className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\)\]\}\)\]\}\))/,
+                match: /(\(0,\i\.jsxs\)\("div",\{className:\i\(\)\(\i\.Bk,\{\[\i\.ly\]:this\.state\.problems\}\),children:\[\(0,\i\.jsx\)\("div",\{className:\i\.u1,children:\i\.intl\.string\(\i\.\i#{intl::CONNECTING_PROBLEMS_CTA}\)\}\),\(0,\i\.jsxs\)\("div",\{children:\[\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.AR,href:\i\.\i\.TWITTER_SUPPORT,target:"_blank",children:\[\(0,\i\.jsx\)\(\i\.\i,\{size:"xs",color:"currentColor",className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\),\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.gy,href:\i\.\i\.STATUS,target:"_blank",children:\[\(0,\i\.jsx\)\(\i,\{className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\)\]\}\)\]\}\))/,
                 replace: "$1,$self.renderLoadingScreenButtons()",
                 fallbacks: [{
                     match: /(?<=href:\i\.\i\.STATUS,target:"_blank",children:\[[^\]]{0,200}\]\}\)\]\}\)\]\}\))/,
@@ -2459,5 +2952,5 @@ export default definePlugin({
                 replace: "$&return!1;"
             }
         },
-    ]
+    ].filter(patch => !onDiscord || typeof patch.find === "string" && DISCORD_SAFE_PATCHES.has(patch.find))
 });

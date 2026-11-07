@@ -10,6 +10,7 @@ import { Button, TextButton } from "@components/Button";
 import { Card } from "@components/Card";
 import { Heading } from "@components/Heading";
 import { DoubleCheckmarkIcon, PencilIcon, PlusIcon, TrashIcon, WebsiteIcon } from "@components/Icons";
+import { Link } from "@components/Link";
 import { Paragraph } from "@components/Paragraph";
 import { SettingsTab, wrapTab } from "@components/settings";
 import { type CustomServer,PREDEFINED_SERVERS } from "@equicordplugins/ChangeEndpoint/servers";
@@ -17,8 +18,10 @@ import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
 import { Alerts, React, TextInput, UserStore, useState } from "@webpack/common";
 
+import ChangeEndpoint from "..";
+import { discover } from "../discovery";
 import { settings } from "../settings";
-import { connectedBackend } from "../utils";
+import { connectedBackend, hasEndpoints, prepareTokenForBackend } from "../utils";
 
 const SETTING_KEYS = ["backend", "customServers", "accountBackends"] as Array<"backend" | "customServers" | "accountBackends">;
 
@@ -63,6 +66,25 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
     const [cdnHost, setCdnHost] = useState(existing?.cdnHost ?? "");
     const [gatewayEndpoint, setGatewayEndpoint] = useState(existing?.gatewayEndpoint ?? "");
     const [mediaProxyEndpoint, setMediaProxyEndpoint] = useState(existing?.mediaProxyEndpoint ?? "");
+    const [discovering, setDiscovering] = useState(false);
+    const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+
+    const findEndpoints = async () => {
+        setDiscovering(true);
+        setDiscoveryError(null);
+        try {
+            const found = await discover(host);
+            setApiEndpoint(found.api);
+            setCdnHost(found.cdn);
+            setGatewayEndpoint(found.gateway);
+            if (!name.trim() && found.name) setName(found.name);
+            setType("advanced");
+        } catch (e) {
+            setDiscoveryError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setDiscovering(false);
+        }
+    };
 
     const canSave = !!name.trim() && (type === "simple"
         ? !!host.trim()
@@ -107,6 +129,14 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
                 <>
                     <Paragraph className={Margins.top8}>Just the bare host, no scheme, no trailing slash (e.g. "rory.server.spacebar.chat"). Assumes the instance follows the standard api./cdn./gateway. convention.</Paragraph>
                     <TextInput value={host} placeholder="rory.server.spacebar.chat" onChange={setHost} />
+                    <div className={classes(Margins.top8, "vc-endpoint-form-actions")}>
+                        <Button size="small" variant="secondary" disabled={!host.trim() || discovering} onClick={findEndpoints}>
+                            {discovering ? "Looking..." : "Find Endpoints"}
+                        </Button>
+                        <Paragraph size="sm" className="vc-endpoint-muted">
+                            {discoveryError ?? "For servers that don't use api./cdn./gateway. subdomains. Fills in the advanced fields from what the server publishes."}
+                        </Paragraph>
+                    </div>
                 </>
             ) : (
                 <>
@@ -166,8 +196,8 @@ function AccountLinkRow() {
 
             {links.length > 0 && (
                 <Paragraph size="sm" className={classes(Margins.top8, "vc-endpoint-muted")}>
-                    {links.length} account{links.length === 1 ? "" : "s"} linked in total. Only linked accounts
-                    trigger an automatic server switch; everyone else keeps whatever server is currently selected.
+                    {links.length} account{links.length === 1 ? "" : "s"} linked in total. Accounts link themselves
+                    when they connect. Switching to an unlinked account asks which backend it belongs to first.
                 </Paragraph>
             )}
         </>
@@ -181,11 +211,18 @@ function EndpointTab() {
 
     const { backend, customServers } = settings.store;
     const active = activeServerLabel();
+    const info = ChangeEndpoint.instanceInfo();
     const restartPending = backend !== connectedBackend;
     const editingServer = editingId ? customServers.find(s => s.id === editingId) : undefined;
 
     const selectServer = (id: string) => {
         if (settings.store.backend === id) return;
+        if (!hasEndpoints(id)) {
+            Alerts.show({ title: "Missing Endpoints", body: `${serverName(id)} has no API or gateway set. Edit it before switching to it.`, confirmText: "Okay" });
+            return;
+        }
+        if (ChangeEndpoint.canSwitchInPlace(id)) return ChangeEndpoint.switchBackend(id);
+        prepareTokenForBackend(id);
         settings.store.backend = id;
         confirmRestart();
     };
@@ -201,6 +238,7 @@ function EndpointTab() {
                 settings.store.customServers = settings.plain.customServers.filter(s => s.id !== id);
                 settings.store.accountBackends = Object.fromEntries(Object.entries(settings.plain.accountBackends).filter(([, linked]) => linked !== id));
                 if (settings.store.backend === id) {
+                    prepareTokenForBackend(PREDEFINED_SERVERS[0].id);
                     settings.store.backend = PREDEFINED_SERVERS[0].id;
                     confirmRestart();
                 }
@@ -216,6 +254,15 @@ function EndpointTab() {
                     <div>
                         <Paragraph weight="bold">{restartPending ? `Restart to connect to ${active.name}` : `Connected to ${active.name}`}</Paragraph>
                         <Paragraph size="sm" className="vc-endpoint-muted">{active.host}</Paragraph>
+                        {info?.instanceName && <Paragraph size="sm" className={Margins.top8}>{info.instanceName}</Paragraph>}
+                        {info?.instanceDescription && <Paragraph size="sm" className="vc-endpoint-muted">{info.instanceDescription}</Paragraph>}
+                        {(info?.frontPage || info?.tosPage || info?.correspondenceEmail) && (
+                            <Paragraph size="sm" className={classes(Margins.top8, "vc-endpoint-instance-links")}>
+                                {info.frontPage && <Link href={info.frontPage}>Website</Link>}
+                                {info.tosPage && <Link href={info.tosPage}>Terms</Link>}
+                                {info.correspondenceEmail && <span className="vc-endpoint-muted">Contact: {info.correspondenceEmail}</span>}
+                            </Paragraph>
+                        )}
                     </div>
                 </div>
                 <div className="vc-endpoint-status-right">

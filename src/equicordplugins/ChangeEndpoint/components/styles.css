@@ -183,3 +183,16 @@
     order: 1;
     margin-left: auto;
 }
+
+.vc-endpoint-backend-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.vc-endpoint-instance-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}

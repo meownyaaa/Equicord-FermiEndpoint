@@ -7,7 +7,7 @@
 import * as DataStore from "@api/DataStore";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { findComponentByCodeLazy } from "@webpack";
-import { Humanize, useEffect, useState } from "@webpack/common";
+import { Humanize, SelectedChannelStore, useEffect, useState } from "@webpack/common";
 
 interface DiscordMediaPlayerProps {
     src: string;
@@ -139,3 +139,39 @@ function CustomVideoPlayerComponent({ src, maxWidth, maxHeight, fileName, fileSi
 }
 
 export const CustomVideoPlayer = ErrorBoundary.wrap(CustomVideoPlayerComponent, { noop: true });
+
+const seekableUrls = new Map<string, { url: Promise<string>; channelId?: string; expiry?: ReturnType<typeof setTimeout>; }>();
+
+function releaseSeekable(src: string) {
+    const entry = seekableUrls.get(src);
+    if (!entry) return;
+    clearTimeout(entry.expiry);
+    entry.url.then(URL.revokeObjectURL);
+    seekableUrls.delete(src);
+}
+
+export async function makeMediaSeekable({ target }: Event) {
+    if (!(target instanceof HTMLMediaElement) || !/^https?:/.test(target.currentSrc)) return;
+    if (target.seekable.length && target.seekable.end(0) >= target.duration) return;
+    const src = target.currentSrc;
+    if (!seekableUrls.has(src)) seekableUrls.set(src, { url: fetch(src).then(res => res.blob()).then(blob => URL.createObjectURL(blob)), channelId: SelectedChannelStore.getChannelId() });
+    const url = await seekableUrls.get(src)?.url;
+    if (!url || target.currentSrc !== src) return;
+    const { currentTime, paused } = target;
+    target.src = url;
+    target.currentTime = currentTime;
+    if (!paused) target.play();
+}
+
+export function expireSeekableMedia(channelId?: string) {
+    for (const [src, entry] of seekableUrls) {
+        if (entry.channelId === channelId) {
+            clearTimeout(entry.expiry);
+            entry.expiry = undefined;
+        } else entry.expiry ??= setTimeout(() => releaseSeekable(src), 60_000);
+    }
+}
+
+export function releaseSeekableMedia() {
+    [...seekableUrls.keys()].forEach(releaseSeekable);
+}

@@ -161,6 +161,11 @@ export const settings = definePluginSettings({
         default: true,
         restartNeeded: true
     },
+    confirmDiscordSwitch: {
+        type: OptionType.BOOLEAN,
+        description: "Ask before switching to or from Discord, since that needs a reload. Switching between other backends happens in place.",
+        default: true
+    },
     ignoreEmailVerification: {
         type: OptionType.BOOLEAN,
         description: "Treat your account as email and phone verified, so guilds that require verification let you chat and the verify email banner goes away. Useful on instances that can't send verification emails or texts.",
