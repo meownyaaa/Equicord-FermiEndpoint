@@ -2144,11 +2144,11 @@ export default definePlugin({
                     replace: "$1===$2&&$self.maxStickers()?$self.maxStickers():"
                 },
                 {
-                    match: /(?<=function \i\((\i)\)\{return )(\i)\.(\i)\[\1\](?=\}function \i\(\i\)\{if\(\i===\i\.\i\.NONE\)return \2\.)/,
+                    match: /(?<=function \i\((\i)\)\{return )(\i)\.(\i)\[\1\](?=\}function \i\(\i,\i\)\{return \2\.\i\[\i\]\.features\.includes\()/,
                     replace: "$self.stickerTierSlots($1,$2.$3)"
                 },
                 {
-                    match: /(?<=MORE_EMOJI\)\?)\i\.EMOJI_MAX_SLOTS_MORE/,
+                    match: /(?<=MORE_EMOJI\)\?)200/,
                     replace: "$self.maxEmojis()||$&"
                 }
             ]
@@ -2186,7 +2186,7 @@ export default definePlugin({
             find: 'location:"getUserMaxFileSize"',
             predicate: () => settings.store.serverAttachmentLimit,
             replacement: {
-                match: /function \i\(\i\)\{(?=return null==\i\?\i\.\i:\i\.isStaff\(\))/,
+                match: /function\(\i\)\{(?=return null==\i\?\i\.\i:\i\.isStaff\(\))/,
                 replace: "$&if($self.maxAttachmentSize())return $self.maxAttachmentSize();"
             }
         },
@@ -2202,7 +2202,7 @@ export default definePlugin({
             find: "enabled?0x40000000:524288e3",
             predicate: () => settings.store.serverAttachmentLimit,
             replacement: {
-                match: /function \i\(\i\)\{(?=let\{location:\i\}=\i;return\(0,\i\.\i\)\(\{location:\i\}\)\.enabled\?0x40000000:524288e3)/,
+                match: /function\(\i\)\{(?=let\{location:\i\}=\i;return\(0,\i\.\i\)\(\{location:\i\}\)\.enabled\?0x40000000:524288e3)/,
                 replace: "$&if($self.maxTotalAttachmentSize())return $self.maxTotalAttachmentSize();"
             }
         },
@@ -2367,7 +2367,7 @@ export default definePlugin({
             predicate: () => getApiEndpoint() != null,
             replacement: [
                 {
-                    match: /fetchDave:\(0,\i\.isWeb\)\(\)/,
+                    match: /fetchDave:\(0,\i\.\i\)\(\)/,
                     replace: "fetchDave:!1"
                 },
                 {
