@@ -66,7 +66,7 @@
 }
 
 /* Quest description text color. */
-.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > div[class*="text-sm"] {
+.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > div[class*="description_"] {
     color: var(--questify-reward-description) !important;
 }
 
@@ -74,8 +74,8 @@
     background-color: transparent;
 }
 
-/* Promoted by XYZ text color. */
-.questify-quest-item-restyle > div[--hero_container] > div[--hero_positionContentOverBackground] > div[--hero_contents] > div[--hero_bottomRow] > div[class*="text-sm"] {
+/* Sponsor label and expiration text color. */
+.questify-quest-item-restyle :is([class*="promotedByCopy_"], [class*="expirationCopy_"]) {
     color: var(--questify-reward-description) !important;
 }
 
