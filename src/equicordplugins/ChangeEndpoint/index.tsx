@@ -1222,6 +1222,11 @@ export default definePlugin({
         return everyone && everyone.color > 0 ? everyone : undefined;
     },
 
+    withEveryoneColor<T extends Pick<ColorRole, "colorString" | "colorStrings"> & { colorRoleId?: string; }>(guildRoles: Record<string, ColorRole>, result: T): T {
+        const everyone = result.colorString == null ? this.getEveryoneColorRole(guildRoles) : undefined;
+        return everyone ? { ...result, colorString: everyone.colorString, colorStrings: everyone.colorStrings, colorRoleId: everyone.id } : result;
+    },
+
     // sets the active backend then reloads, since endpoints are baked into GLOBAL_ENV at boot
     // maybe i could complicate this and have it half reload? client takes a while to initially
     // start up, faster switch times would be nicer
@@ -1426,6 +1431,10 @@ export default definePlugin({
 
     isLinkedElsewhere(userId: string) {
         return getLinkedBackend(userId) != null;
+    },
+
+    markTokenValid(userId: string) {
+        FluxDispatcher.dispatch({ type: "MULTI_ACCOUNT_VALIDATE_TOKEN_SUCCESS", userId });
     },
 
     switchAccountBackend(userId: string) {
@@ -1649,7 +1658,7 @@ export default definePlugin({
 
     patches: [
         {
-            find: "recipients:i.recipients,bitrate:n.bitrate??i.bitrate}",
+            find: /recipients:\i\.recipients,bitrate:\i\.bitrate\?\?\i\.bitrate\}/,
             // CHANNEL_UPDATE payloads that omit icon (e.g. a rename) get merged onto the
             // existing channel here - discord already re-adds bitrate the same way for the
             // same reason, icon just needs the same treatment
@@ -1659,7 +1668,7 @@ export default definePlugin({
             }
         },
         {
-            find: "this.iconEmoji=e.iconEmoji,this.lastMessageId=",
+            find: ".iconEmoji,this.lastMessageId=",
             replacement: {
                 match: /this\.iconEmoji=(\i)\.iconEmoji/g,
                 replace: "this.icon=$1.icon,this.iconEmoji=$1.iconEmoji"
@@ -1720,13 +1729,14 @@ export default definePlugin({
         },
         {
             find: "native_build_number",
+            retry: true,
             replacement: {
                 match: /(\i)\.native_build_number=(\i)/,
                 replace: "$2"
             }
         },
         {
-            find: "installation_id:n}:{}",
+            find: "?{installation_id:",
             replacement: {
                 match: /null!=\i\?\{installation_id:\i\}:\{\}/,
                 replace: "{}"
@@ -1746,10 +1756,14 @@ export default definePlugin({
             ]
         },
         {
-            find: "os_sdk_version=",
+            find: "os_sdk_version",
             replacement: {
-                match: /(\i)\.os_sdk_version=\i\?\.split\("\."\)\[\d\]/g,
-                replace: "$1.os_sdk_version=void 0"
+                match: /(?<=\{os_sdk_version:)\i\.split\("\."\)\[\d\](?=\})/g,
+                replace: "void 0",
+                fallbacks: [{
+                    match: /(\i)\.os_sdk_version=\i\?\.split\("\."\)\[\d\]/g,
+                    replace: "$1.os_sdk_version=void 0"
+                }]
             }
         },
         // all that is to reduce any problems with Identify in the future
@@ -1883,7 +1897,7 @@ export default definePlugin({
             }
         },
         {
-            find: "features.has(a.GuildFeatures.ENHANCED_ROLE_COLORS)",
+            find: ".GuildFeatures.ENHANCED_ROLE_COLORS)",
             all: true,
             replacement: {
                 match: /\w+\.features\.has\(\w+\.GuildFeatures\.ENHANCED_ROLE_COLORS\)/g,
@@ -1904,7 +1918,11 @@ export default definePlugin({
                     .replace(
                         `return{colorString:${n}?.colorString??null,colorStrings:${n}?.colorStrings??null,colorRoleId:${n}?.id,iconRoleId:${r}?.id,hoistRoleId:${i}?.id,highestRoleId:${a}?.id}}`,
                         `return{colorString:(${n}??=$self.getEveryoneColorRole(${e}))?.colorString??null,colorStrings:${n}?.colorStrings??null,colorRoleId:${n}?.id,iconRoleId:${r}?.id,hoistRoleId:${i}?.id,highestRoleId:${a}?.id}}`
-                    )
+                    ),
+                fallbacks: [{
+                    match: /function (\i)\((\i),(\i)\)\{(?=.{0,40}?if\(0===\3\.length\)return\{colorString:null)/,
+                    replace: "function $1($2,$3){return $self.withEveryoneColor($2,$1_vc($2,$3))}function $1_vc($2,$3){"
+                }]
             }
         },
         {
@@ -1923,17 +1941,17 @@ export default definePlugin({
             }
         },
         {
-            find: "originalContentType:e.original_content_type,loadingState:e.loading_state",
+            find: /originalContentType:\i\.original_content_type,loadingState:\i\.loading_state/,
             replacement: {
-                match: /height:e\.height,width:e\.width,/,
-                replace: "height:e.height||360,width:e.width||640,"
+                match: /(?<=proxyUrl:(\i)\.proxy_url,)height:\1\.height,width:\1\.width,/,
+                replace: "height:$1.height||360,width:$1.width||640,"
             }
         },
         {
-            find: "loadingState:e.loading_state,",
+            find: /loadingState:\i\.loading_state,/,
             replacement: {
-                match: /loadingState:e\.loading_state,/,
-                replace: "loadingState:e.loading_state??2,"
+                match: /(?<=loadingState:\i\.loading_state)(?=,)/,
+                replace: "??2"
             }
         },
         {
@@ -1944,7 +1962,7 @@ export default definePlugin({
             }
         },
         {
-            find: ".WEBRTC].find(e=>",
+            find: ".WEBRTC].find(",
             replacement: {
                 match: /\[(\i\.\i\.NATIVE),(\i\.\i\.WEBRTC)\](?=\.find\(\i=>\i\(\i\)\.supported\(\)\))/,
                 replace: "[$2,$1]"
@@ -1952,6 +1970,7 @@ export default definePlugin({
         },
         {
             find: '"Node.js"===',
+            retry: true,
             replacement: {
                 match: /"Chrome"===(\i)\(\)\.name\|\|"Safari"===\i\(\)\.name\|\|"Firefox"===\i\(\)\.name&&(\i)>=80\|\|"Opera"===\i\(\)\.name\|\|"Microsoft Edge"===\i\(\)\.name/,
                 replace: '($&||"Electron"===$1().name&&$2>=1)'
@@ -1974,17 +1993,21 @@ export default definePlugin({
             }
         },
         {
-            find: 'startsWith("blob:"))return e;let n=',
+            find: /startsWith\("blob:"\)\)return \i;let \i=/,
             replacement: {
-                match: /(let n=\w+\.\w+\.toURLSafe\(e\);return null==n\?null:\()n\.searchParams\.set\("format","webp"\)/,
-                replace: '$1/\\.(mov|mp4|webm|mkv|avi|mpg|mpeg)$/i.test(n.pathname)||n.searchParams.set("format","webp")'
+                match: /(let (\i)=\i\.\i\.toURLSafe\(\i\);return null==\2\?null:\()\2\.searchParams\.set\("format","webp"\)/,
+                replace: '$1/\\.(mov|mp4|webm|mkv|avi|mpg|mpeg)$/i.test($2.pathname)||$2.searchParams.set("format","webp")'
             }
         },
         {
             find: 'case"VIDEO":case"CLIP":return(0,',
             replacement: {
                 match: /case"VIDEO":case"CLIP":return\(0,\i\.\i\)\(\i,\{item:(\i),[^}]{0,400}?maxWidth:(\i),maxHeight:(\i)[^}]{0,300}\}\)/,
-                replace: 'case"VIDEO":case"CLIP":return $self.renderSpoilerVideo($1,$2||640,$3||400)'
+                replace: 'case"VIDEO":case"CLIP":return $self.renderSpoilerVideo($1,$2||640,$3||400)',
+                fallbacks: [{
+                    match: /case"VIDEO":case"CLIP":return\(0,\i\.\i\)\(\i,(\{item:\i,[^}]{0,800}\})\)/,
+                    replace: 'case"VIDEO":case"CLIP":return(vcProps=>$self.renderSpoilerVideo(vcProps.item,vcProps.maxWidth||640,vcProps.maxHeight||400))($1)'
+                }]
             }
         },
         {
@@ -2021,6 +2044,7 @@ export default definePlugin({
         },
         {
             find: 'case"PLAINTEXT_PREVIEW":return(0,',
+            retry: true,
             replacement: {
                 match: /spoiler:(\(0,\i\.\i\)\((\i)\.flags\?\?0,\i\.\i\.IS_SPOILER\))/,
                 replace: 'spoiler:($2.filename??$2.originalItem?.filename)?.startsWith("SPOILER_")||$1',
@@ -2031,28 +2055,28 @@ export default definePlugin({
             }
         },
         {
-            find: "hasPermissionCore(e,t){return this.asyncify(",
+            find: /hasPermissionCore\(\i,\i\)\{return this\.asyncify\(/,
             replacement: {
-                match: /hasPermissionCore\(e,t\)\{return this\.asyncify\([^}]*\)\}/,
-                replace: "hasPermissionCore(e,t){return Promise.resolve(!0)}"
+                match: /(hasPermissionCore\(\i,\i\)\{)return this\.asyncify\([^}]*\)\}/,
+                replace: "$1return Promise.resolve(!0)}"
             }
         },
         {
-            find: "requestPermissionCore(e,t){return this.asyncify(",
+            find: /requestPermissionCore\(\i,\i\)\{return this\.asyncify\(/,
             replacement: {
-                match: /requestPermissionCore\(e,t\)\{return this\.asyncify\([^}]*\)\}/,
-                replace: "requestPermissionCore(e,t){return Promise.resolve(!0)}"
+                match: /(requestPermissionCore\(\i,\i\)\{)return this\.asyncify\([^}]*\)\}/,
+                replace: "$1return Promise.resolve(!0)}"
             }
         },
         {
-            find: "didHavePermission(e){return this.storage.hasPermission(e)}",
+            find: /didHavePermission\(\i\)\{return this\.storage\.hasPermission\(\i\)\}/,
             replacement: {
-                match: /didHavePermission\(e\)\{return this\.storage\.hasPermission\(e\)\}/,
-                replace: "didHavePermission(e){return!0}"
+                match: /(didHavePermission\(\i\)\{)return this\.storage\.hasPermission\(\i\)\}/,
+                replace: "$1return!0}"
             }
         },
         {
-            find: "getCollectiblesItemAssetUrl:i}=n(",
+            find: /getCollectiblesItemAssetUrl:\i\}=\i\(/,
             replacement: {
                 match: /(let\{CollectiblesItemAssetFormat:\w+,getCollectiblesItemAssetUrl:\w+\}=\w+\(\d+\),\w+=\w+\?\w+\.ANIMATED:\w+\.STATIC,\w+=\w+\(\{skuId:\w+\.skuId,assetFormat:\w+\}\);)if\(null!=\w+\)return \w+\}catch\{return null\}/,
                 replace: "$1}catch{return null}"
@@ -2060,6 +2084,7 @@ export default definePlugin({
         },
         {
             find: 'source_object:"GIF Picker"',
+            retry: true,
             replacement: {
                 match: /(gif_provider:(\i)\.provider.{0,150}?source_object:"GIF Picker",gif_url:\2\.url,gif_id:\2\.id\};)(\i)\(\2\.url,/,
                 replace: "$1$3($self.resolveGifUrl($2),"
@@ -2088,12 +2113,17 @@ export default definePlugin({
                 },
                 {
                     match: /if\(null==(\i)\|\|""===\1\)return void (\i\.\i)\.dispatch\(\{type:"MULTI_ACCOUNT_VALIDATE_TOKEN_FAILURE",userId:(\i)\}\);/,
-                    replace: '$&if($self.isLinkedElsewhere($3))return void $2.dispatch({type:"MULTI_ACCOUNT_VALIDATE_TOKEN_SUCCESS",userId:$3});'
+                    replace: '$&if($self.isLinkedElsewhere($3))return void $2.dispatch({type:"MULTI_ACCOUNT_VALIDATE_TOKEN_SUCCESS",userId:$3});',
+                    fallbacks: [{
+                        match: /(?<=\{type:"MULTI_ACCOUNT_VALIDATE_TOKEN_FAILURE",userId:(\i)\}\);)/,
+                        replace: "if($self.isLinkedElsewhere($1))return void $self.markTokenValid($1);"
+                    }]
                 }
             ]
         },
         {
             find: "#{intl::CREATE_SERVER_GUIDELINES},{guidelinesURL:",
+            retry: true,
             predicate: () => serverWithCodeOfConduct() != null,
             replacement: {
                 match: /\i\.intl\.format\(\i\.t#{intl::CREATE_SERVER_GUIDELINES},\{guidelinesURL:[^}]{0,40}\}\)/,
@@ -2102,6 +2132,7 @@ export default definePlugin({
         },
         {
             find: ".terms,{guidelinesURL:",
+            retry: true,
             predicate: () => serverWithCodeOfConduct() != null,
             replacement: {
                 match: /\i\.intl\.format\(\i\.terms,\{guidelinesURL:[^}]{0,40}\}\)/,
@@ -2112,7 +2143,11 @@ export default definePlugin({
             find: "[WS CLOSED] because of authentication failure, marking as closed.",
             replacement: {
                 match: /_handleClose\((\i),(\i),(\i)\)\{/,
-                replace: "$&$self.onGatewayClose($2,$3);"
+                replace: "$&$self.onGatewayClose($2,$3);",
+                fallbacks: [{
+                    match: /_handleClose\([^)]{0,30}\)\{/,
+                    replace: "$&$self.onGatewayClose(arguments[1],arguments[2]);"
+                }]
             }
         },
         {
@@ -2172,14 +2207,22 @@ export default definePlugin({
             find: "async setRemoteAnswer(",
             replacement: {
                 match: /(async setRemoteAnswer\(\i,\i,\i,\i\)\{let (\i)=this\.pc,.{0,120}?try\{await \2\.setRemoteDescription\()(\i)\)/,
-                replace: "$1$self.withVideoMinBitrate($3));$self.applyVideoBuffer($2)"
+                replace: "$1$self.withVideoMinBitrate($3));$self.applyVideoBuffer($2)",
+                fallbacks: [{
+                    match: /(async setRemoteAnswer\([^)]{0,30}\)\{.{0,300}?await (this\.pc|\i)\.setRemoteDescription\()(\i)\)/,
+                    replace: "$1$self.withVideoMinBitrate($3));$self.applyVideoBuffer(this.pc)"
+                }]
             }
         },
         {
             find: '"SortedVoiceStateStore"',
             replacement: {
                 match: /updateUsers\(\)\{return (null==this\._pending&&this\._voiceStates\.values\(\)\.reduce\(.{0,200}?,!1\))\}/,
-                replace: "updateUsers(){return $self.addMissingVoiceStates(this)|($1)}"
+                replace: "updateUsers(){return $self.addMissingVoiceStates(this)|($1)}",
+                fallbacks: [{
+                    match: /updateUsers\(\)\{/,
+                    replace: "updateUsers(){return $self.addMissingVoiceStates(this)|this.vcUpdateUsers()}vcUpdateUsers(){"
+                }]
             }
         },
         {
@@ -2244,7 +2287,11 @@ export default definePlugin({
                 },
                 {
                     match: /(?<=properties:\{\.\.\.)(\i\.default\.getSuperProperties\(\)),client_app_state:\i,is_fast_connect:!1,gateway_connect_reasons:\i\.\i\(\),/,
-                    replace: "$self.identifyProperties($1),"
+                    replace: "$self.identifyProperties($1),",
+                    fallbacks: [{
+                        match: /(?<=properties:\{\.\.\.)(\i\.\i\.getSuperProperties\(\)),/,
+                        replace: "$self.identifyProperties($1),"
+                    }]
                 }
             ]
         },
@@ -2267,7 +2314,7 @@ export default definePlugin({
             find: 'navId:"manage-multi-account"',
             replacement: [
                 {
-                    match: /(color:"text-default",variant:"text-sm\/normal",children:\i\}\)\]\}\),\i)\]/,
+                    match: /(color:"text-default",variant:"[^"]{1,20}",children:\i\}\)\]\}\),\i)\]/,
                     replace: "$1,$self.renderLinkedBackend(arguments[0].user.id)]"
                 },
                 {
@@ -2292,6 +2339,7 @@ export default definePlugin({
         },
         {
             find: '"0M5fN7"])',
+            retry: true,
             replacement: {
                 match: /(children:\(0,\i\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",textVariant:"body-sm\/medium",text:\i\.intl\.string\(\i\.\i\["9g2mqT"\]\),onClick:\i\}\)\}\))\]\}\)\}/,
                 replace: "$1,$self.renderLoginSwitchBackendButton()]})}"
@@ -2299,6 +2347,7 @@ export default definePlugin({
         },
         {
             find: "username webauthn",
+            retry: true,
             replacement: {
                 match: /(\i&&\i)&&\(0,(\i)\.jsx\)\("div",\{className:(\i\.\i),children:(\(0,\i\.jsx\)\(\i\.\i,\{onClick:\(\)=>\i\(!1\),variant:"secondary",text:\i\.intl\.string\(\i\.t\["1MrpWO"\]\),icon:\i\.\i\}\))\}\)/,
                 replace: "(0,$2.jsxs)(\"div\",{className:$3,style:{display:\"flex\",alignItems:\"center\",gap:\"8px\"},children:[$1&&$4,$self.renderLoginSwitchBackendButton()]})"
@@ -2306,6 +2355,7 @@ export default definePlugin({
         },
         {
             find: '"13/7kX"]),type:"button"',
+            retry: true,
             replacement: {
                 match: /(?<=leading:)\(0,(\i)\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:\i,text:\i\.intl\.string\(\i\.\i\["13\/7kX"\]\),type:"button"\}\)/,
                 replace: '(0,$1.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderSwitchBackendButton(),$&]})'
@@ -2315,7 +2365,11 @@ export default definePlugin({
             find: "--connecting-container-fade-duration",
             replacement: {
                 match: /(\(0,\i\.jsxs\)\("div",\{className:\i\(\)\(\i\.Bk,\{\[\i\.ly\]:this\.state\.problems\}\),children:\[\(0,\i\.jsx\)\("div",\{className:\i\.u1,children:\i\.intl\.string\(\i\.t\.AG2zPM\)\}\),\(0,\i\.jsxs\)\("div",\{children:\[\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.AR,href:\i\.\i\.TWITTER_SUPPORT,target:"_blank",children:\[\(0,\i\.jsx\)\(\i\.\i,\{size:"xs",color:"currentColor",className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\),\(0,\i\.jsxs\)\(\i\.Anchor,\{className:\i\.gy,href:\i\.\i\.STATUS,target:"_blank",children:\[\(0,\i\.jsx\)\(\i,\{className:\i\.Kk\}\),\i\.intl\.string\(\i\.t\.\i\)\]\}\)\]\}\)\]\}\))/,
-                replace: "$1,$self.renderLoadingScreenButtons()"
+                replace: "$1,$self.renderLoadingScreenButtons()",
+                fallbacks: [{
+                    match: /(?<=href:\i\.\i\.STATUS,target:"_blank",children:\[[^\]]{0,200}\]\}\)\]\}\)\]\}\))/,
+                    replace: ",$self.renderLoadingScreenButtons()"
+                }]
                 /*
                    helper for the buttons on loading screen - i gotta make them persist for like a
                    second or two longer, sometimes backend will connect insanely fast and you get no
@@ -2350,14 +2404,22 @@ export default definePlugin({
             // only makes sense against a backend that had dave to downgrade from
             replacement: {
                 match: /_ensureDaveProtocolVersionAllowed\(\i,\i,\i\)\{/,
-                replace: "$&return!0;"
+                replace: "$&return!0;",
+                fallbacks: [{
+                    match: /_ensureDaveProtocolVersionAllowed\([^)]{0,30}\)\{/,
+                    replace: "$&return!0;"
+                }]
             }
         },
         {
             find: "disconnectForInvalidDaveMessage(`op ${",
             replacement: {
                 match: /(?<=\i\.dave_protocol_version)(?=\))/,
-                replace: "??0"
+                replace: "??0",
+                fallbacks: [{
+                    match: /(?<=\.dave_protocol_version)(?=[,)])/,
+                    replace: "??0"
+                }]
             }
         },
         {
@@ -2368,7 +2430,11 @@ export default definePlugin({
             replacement: [
                 {
                     match: /fetchDave:\(0,\i\.\i\)\(\)/,
-                    replace: "fetchDave:!1"
+                    replace: "fetchDave:!1",
+                    fallbacks: [{
+                        match: /(?<=fetchAsyncResources\(\)\{let \i=\{fetchDave:)[^}]{1,40}(?=\})/,
+                        replace: "!1"
+                    }]
                 },
                 {
                     match: /startDavePreload\(\)\{/,
@@ -2376,7 +2442,11 @@ export default definePlugin({
                 },
                 {
                     match: /(getSupportedSecureFramesProtocolVersion\(\)\{)return \i\.getSupportedSecureFramesProtocolVersion\(\)\}/,
-                    replace: "$1return 0}"
+                    replace: "$1return 0}",
+                    fallbacks: [{
+                        match: /(?<=getSupportedSecureFramesProtocolVersion\(\)\{)/,
+                        replace: "return 0;"
+                    }]
                 }
             ]
         },

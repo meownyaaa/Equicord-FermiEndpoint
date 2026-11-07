@@ -36,6 +36,8 @@ export function getFactoryPatchedBy(moduleId: PropertyKey, webpackRequire = wreq
 
 const logger = new Logger("WebpackPatcher", "#8caaee");
 
+const warnedRetries = new WeakSet<Patch>();
+
 /** Whether we tried to fallback to the WebpackRequire of the factory, or disabled patches */
 let wreqFallbackApplied = false;
 
@@ -518,6 +520,7 @@ function patchFactory(moduleId: PropertyKey, originalFactory: AnyModuleFactory):
 
         let shouldRestorePrevious = false;
         let markedAsPatched = false;
+        let applied = false;
 
         const executePatch = traceFunctionWithResults(`patch by ${patch.plugin}`, (match: string | RegExp, replace: string) => {
             if (typeof match !== "string" && match.global) {
@@ -545,8 +548,20 @@ function patchFactory(moduleId: PropertyKey, originalFactory: AnyModuleFactory):
                     patchTimings.push([patch.plugin, moduleId, replacement.match, totalTime]);
                 }
 
+                if (newPatchedCode === patchedCode && replacement.fallbacks) {
+                    for (const [index, fallback] of replacement.fallbacks.entries()) {
+                        newPatchedCode = executePatch(fallback.match, fallback.replace as string)[0];
+
+                        if (newPatchedCode !== patchedCode) {
+                            logger.warn(`Patch by ${patch.plugin} used fallback ${index + 1} (Module id is ${String(moduleId)}): ${replacement.match}`);
+                            break;
+                        }
+                    }
+                }
+
                 if (newPatchedCode === patchedCode) {
-                    if (!(patch.noWarn || replacement.noWarn)) {
+                    if (!(patch.noWarn || replacement.noWarn || warnedRetries.has(patch))) {
+                        if (patch.retry) warnedRetries.add(patch);
                         logger.warn(`Patch by ${patch.plugin} had no effect (Module id is ${String(moduleId)}): ${replacement.match}`);
                         if (IS_DEV) {
                             logger.debug("Function Source:\n", patchedCode);
@@ -591,6 +606,7 @@ function patchFactory(moduleId: PropertyKey, originalFactory: AnyModuleFactory):
                     markedAsPatched = true;
                 }
 
+                applied = true;
                 patchedCode = newPatchedCode;
                 patchedSource = newPatchedSource;
                 patchedFactory = newPatchedFactory;
@@ -636,7 +652,7 @@ function patchFactory(moduleId: PropertyKey, originalFactory: AnyModuleFactory):
             }
         }
 
-        if (!patch.all) {
+        if (!patch.all && !(patch.retry && (!applied || shouldRestorePrevious))) {
             patches.splice(i--, 1);
         }
     }

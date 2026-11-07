@@ -109,6 +109,7 @@ export function addPatch(newPatch: Omit<Patch, "plugin">, pluginName: string, pl
 
     for (const replacement of patch.replacement) {
         canonicalizeReplacement(replacement, pluginPath);
+        replacement.fallbacks?.forEach(fallback => canonicalizeReplacement(fallback, pluginPath));
 
         if (IS_REPORTER) {
             delete replacement.predicate;

@@ -82,6 +82,8 @@ export interface PatchReplacement {
     replace: string | ReplaceFn;
     /** Do not warn if this replacement did no changes */
     noWarn?: boolean;
+    /** Tried in order when match has no effect. Using one logs a warning so a stale match still gets noticed */
+    fallbacks?: Pick<PatchReplacement, "match" | "replace">[];
     /**
      * A function which returns whether this patch replacement should be applied.
      * This is ran before patches are registered, so if this returns false, the patch will never be registered.
@@ -103,6 +105,8 @@ export interface Patch {
     all?: boolean;
     /** Do not warn if this patch did no changes */
     noWarn?: boolean;
+    /** Keep checking later modules if find matched a module but no replacement had any effect there */
+    retry?: boolean;
     /** Only apply this set of replacements if all of them succeed. Use this if your replacements depend on each other */
     group?: boolean;
     /**
