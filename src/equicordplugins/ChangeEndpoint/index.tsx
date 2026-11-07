@@ -1848,7 +1848,7 @@ export default definePlugin({
                     <Text size="md" weight="normal">ChangeEndpoint doesn't know where this account was made. Its token gets sent to whichever backend you pick, so only pick the one it really belongs to.</Text>
                     <div className="vc-endpoint-backend-picker">
                         {backends.map(s => (
-                            <Button key={s.id} variant={s.id === connectedBackend ? "primary" : "secondary"} onClick={() => openAccountOn(userId, token, s.id)}>
+                            <Button key={s.id} variant={s.id === connectedBackend ? "primary" : "secondary"} onClick={() => { Alerts.close(); openAccountOn(userId, token, s.id); }}>
                                 {s.name}
                             </Button>
                         ))}
