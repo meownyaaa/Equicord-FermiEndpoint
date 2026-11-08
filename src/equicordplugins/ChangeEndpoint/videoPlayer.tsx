@@ -126,7 +126,7 @@ function CustomVideoPlayerComponent({ src, maxWidth, maxHeight, fileName, fileSi
             playable
             downloadable
             allowFullScreen
-            responsive
+            responsive={false}
             volume={1}
             autoPlay={false}
             autoMute={false}
