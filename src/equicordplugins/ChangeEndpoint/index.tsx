@@ -13,16 +13,16 @@ import { FormSwitch } from "@components/FormSwitch";
 import { WebsiteIcon } from "@components/Icons";
 import { Text } from "@components/Text";
 import SettingsPlugin from "@plugins/_core/settings";
-import { getIntlMessage } from "@utils/discord";
+import { getIntlMessage, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
 import { openModalLazy } from "@utils/modal";
 import { escapeRegExp } from "@utils/text";
 import definePlugin, { PluginNative } from "@utils/types";
-import type { Channel, GuildFeatures, Stream, User } from "@vencord/discord-types";
-import { ChannelType } from "@vencord/discord-types/enums";
+import type { Channel, ExpressionPickerStoreState, GuildFeatures, Stream, User } from "@vencord/discord-types";
+import { ChannelType, CloudUploadPlatform } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PermissionsBits, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, CloudUploader, Constants, ContextMenuApi, DraftType, ExpressionPickerStore, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageActions, MessageStore, NavigationRouter, PendingReplyStore, PermissionsBits, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -624,6 +624,94 @@ async function loadInstanceInfo() {
 }
 
 const httpUrl = (url: string | null | undefined) => url && /^https?:\/\//.test(url) ? url : undefined;
+
+const SIGNATURE_LIFETIME = 30 * 60 * 1000;
+const refreshedGifUrls = new Map<string, { url: string; at: number; }>();
+const queuedGifUrls = new Map<string, string>();
+const gifRefreshListeners = new Set<() => void>();
+let gifRefreshVersion = 0;
+let gifRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function unsignedAttachmentKey(src: string) {
+    const cdn = getApiEndpoint() != null ? getCdnHost() : null;
+    if (!cdn) return null;
+    const url = parseUrl(src);
+    if (!url || url.hostname !== cdn || !/^\/(ephemeral-)?attachments\//.test(url.pathname)) return null;
+    for (const key of ["ex", "is", "hm"]) url.searchParams.delete(key);
+    return url.toString();
+}
+
+async function flushGifRefresh() {
+    gifRefreshTimer = null;
+    const batch = [...queuedGifUrls];
+    queuedGifUrls.clear();
+    if (!batch.length) return;
+    try {
+        const { body } = await RestAPI.post({ url: "/attachments/refresh-urls", body: { attachment_urls: batch.map(([, src]) => src) } });
+        const urls: unknown[] = body?.refreshed_urls ?? [];
+        batch.forEach(([key], i) => {
+            const entry = urls[i] as string | { refreshed?: string; } | undefined;
+            const url = typeof entry === "string" ? entry : entry?.refreshed;
+            if (url) refreshedGifUrls.set(key, { url, at: Date.now() });
+        });
+    } catch (e) {
+        logger.warn("Couldn't refresh favorite GIF links", e);
+        batch.forEach(([key, src]) => refreshedGifUrls.set(key, { url: src, at: Date.now() }));
+    }
+    gifRefreshVersion++;
+    gifRefreshListeners.forEach(listener => listener());
+}
+
+function refreshedGifSrc(src: string) {
+    const key = unsignedAttachmentKey(src);
+    if (!key) return src;
+    const cached = refreshedGifUrls.get(key);
+    if (cached && Date.now() - cached.at < SIGNATURE_LIFETIME) return cached.url;
+    if (!queuedGifUrls.has(key)) {
+        queuedGifUrls.set(key, src);
+        gifRefreshTimer ??= setTimeout(flushGifRefresh, 50);
+    }
+    return cached?.url ?? src;
+}
+
+function sendGifUpload(gif: { url: string; src: string; }, sendLink: () => void) {
+    const link = [gif.url, gif.src].find(unsignedAttachmentKey);
+    const pickerState = (ExpressionPickerStore.useExpressionPickerStore as { getState?(): ExpressionPickerStoreState; }).getState?.();
+    const channelId = pickerState?.activeChannelId ?? SelectedChannelStore.getChannelId();
+    if (!link || !channelId) return sendLink();
+
+    const reply = PendingReplyStore.getPendingReply(channelId);
+    if (reply) FluxDispatcher.dispatch({ type: "DELETE_PENDING_REPLY", channelId });
+
+    (async () => {
+        const { body } = await RestAPI.post({ url: "/attachments/refresh-urls", body: { attachment_urls: [link] } });
+        const entry = body?.refreshed_urls?.[0];
+        const source = parseUrl(typeof entry === "string" ? entry : entry?.refreshed ?? link);
+        if (!source) throw new Error("Invalid attachment link");
+        for (const key of ["format", "animated", "width", "height", "size", "quality"]) source.searchParams.delete(key);
+        const res = await fetch(source);
+        if (!res.ok) throw new Error(`CDN answered ${res.status}`);
+        const blob = await res.blob();
+        const file = new File([blob], decodeURIComponent(source.pathname.split("/").pop() || "image.gif"), { type: blob.type });
+        await sendMessage(channelId, {}, true, {
+            ...(reply ? MessageActions.getSendMessageOptionsForReply(reply) : {}),
+            attachmentsToUpload: [new CloudUploader({ file, platform: CloudUploadPlatform.WEB }, channelId)]
+        });
+    })().catch(e => {
+        logger.warn("Couldn't upload the favorite GIF, sending the link instead", e);
+        sendLink();
+    });
+}
+
+function useGifRefreshVersion() {
+    const [version, setVersion] = useState(gifRefreshVersion);
+    useEffect(() => {
+        const listener = () => setVersion(gifRefreshVersion);
+        gifRefreshListeners.add(listener);
+        return () => void gifRefreshListeners.delete(listener);
+    }, []);
+    return version;
+}
 
 async function loadInstanceLimits() {
     const { body } = await RestAPI.get({ url: "/policies/instance/limits" });
@@ -1715,6 +1803,10 @@ export default definePlugin({
         envRefreshers.push(refresh);
     },
 
+    refreshedGifSrc,
+    sendGifUpload,
+    useGifRefreshVersion,
+
     maxBio() {
         return instanceLimits.maxBio;
     },
@@ -2330,6 +2422,26 @@ export default definePlugin({
             }
         },
         {
+            find: "ATTACHMENTS_REFRESH_URLS,body:{attachment_urls:",
+            replacement: [
+                {
+                    match: /(?<=get\("ex"\)\?\?"",16\)\)\?void 0:)(\i)\*/,
+                    replace: "$1>1e11?$1:$1*"
+                },
+                {
+                    match: /\.refreshed_urls\[0\]\.refreshed/,
+                    replace: ".refreshed_urls.map(u=>u?.refreshed??u)[0]"
+                }
+            ]
+        },
+        {
+            find: '"order").reverse().value()',
+            replacement: {
+                match: /(?<=src:)(\i\?\.\(\i\.src,\i\)\?\?\i\.src)(\}\)\)\.sortBy\("order"\)\.reverse\(\)\.value\(\),\[\i,\i)\]/,
+                replace: "$self.refreshedGifSrc($1)$2,$self.useGifRefreshVersion()]"
+            }
+        },
+        {
             find: '"MaskedLinkStore"',
             replacement: {
                 match: /\i=window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT\?\.replace\("\/\/",""\)/,
@@ -2541,8 +2653,8 @@ export default definePlugin({
             find: 'source_object:"GIF Picker"',
             retry: true,
             replacement: {
-                match: /(gif_provider:(\i)\.provider.{0,150}?source_object:"GIF Picker",gif_url:\2\.url,gif_id:\2\.id\};)(\i)\(\2\.url,/,
-                replace: "$1$3($self.resolveGifUrl($2),"
+                match: /(gif_provider:(\i)\.provider.{0,150}?source_object:"GIF Picker",gif_url:\2\.url,gif_id:\2\.id\};)(\i)\(\2\.url,(void 0,void 0,!0,void 0,\i)\)/,
+                replace: "$1$self.sendGifUpload($2,()=>$3($self.resolveGifUrl($2),$4))"
                 /*
                    gotta make the gif picker patches better at some point, right now theyre basic
                    and dont really fix the main problems, although they are good enough to work for
