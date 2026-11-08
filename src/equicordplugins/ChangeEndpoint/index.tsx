@@ -19,10 +19,10 @@ import { parseUrl, removeFromArray } from "@utils/misc";
 import { openModalLazy } from "@utils/modal";
 import { escapeRegExp } from "@utils/text";
 import definePlugin, { PluginNative } from "@utils/types";
-import type { GuildFeatures, Stream, User } from "@vencord/discord-types";
+import type { Channel, GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, Constants, ContextMenuApi, DraftType, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageStore, NavigationRouter, PermissionsBits, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -43,6 +43,7 @@ interface MultiAccountUser {
 const MultiAccountStore: { getUsers(): MultiAccountUser[]; } = findStoreLazy("MultiAccountStore");
 const switchToAccount: (userId: string) => Promise<unknown> = findByCodeLazy("MULTI_ACCOUNT_SWITCH_START");
 const UserRecord: typeof User = findLazy(m => m?.prototype?.getAvatarURL);
+const computePermissions: (options: { user: string; context: Channel; }) => bigint = findByCodeLazy(".getCurrentUser()", ".computeLurkerPermissionsAllowList()");
 const CircleCheckIcon = findComponentByCodeLazy("M12 23a11 11 0 1 0 0-22 11 11 0 0 0 0 22Zm5.7-13.3");
 const CircleWarningIcon = findComponentByCodeLazy("M12 23a11 11 0 1 0 0-22 11 11 0 0 0 0 22Zm1.44-15.94");
 const SelectedBackendIcon = () => <CircleCheckIcon size="sm" color="var(--brand-500)" secondaryColor="var(--white-500)" />;
@@ -544,10 +545,50 @@ function requestMemberList(guildId: string, channelId: string) {
     if (socket.isSessionEstablished()) socket.updateGuildSubscriptions({ [guildId]: { channels: { [channelId]: [[0, 99]] } } });
 }
 
-function memberListInterceptor(payload: { type: string; guildId?: string; id?: string; }) {
+interface MemberListItem {
+    group?: { id: string; count: number; };
+    member?: { user: { id: string; }; };
+}
+
+interface MemberListUpdate {
+    type: string;
+    guildId?: string;
+    id?: string;
+    groups?: { id: string; count: number; }[];
+    ops?: { op: string; range?: [number, number]; items?: MemberListItem[]; }[];
+}
+
+function hideMembersWithoutAccess(payload: MemberListUpdate, guildId: string, channelId: string) {
+    const channel = ChannelStore.getChannel(channelId);
+    if (!channel) return;
+    const canView = (userId: string) => !GuildMemberStore.isMember(guildId, userId) || (computePermissions({ user: userId, context: channel }) & PermissionsBits.VIEW_CHANNEL) !== 0n;
+
+    const counts = new Map<string, number>();
+    for (const op of payload.ops ?? []) {
+        if (op.op !== "SYNC" || !op.items || !op.range) continue;
+        let groupId: string | null = null;
+        const kept = op.items.filter(item => {
+            if (item.group) {
+                groupId = item.group.id;
+                counts.set(groupId, 0);
+                return true;
+            }
+            if (item.member && !canView(item.member.user.id)) return false;
+            if (groupId) counts.set(groupId, (counts.get(groupId) ?? 0) + 1);
+            return true;
+        });
+        op.items = kept.filter(item => !item.group || counts.get(item.group.id)).map(item => item.group ? { group: { ...item.group, count: counts.get(item.group.id) ?? 0 } } : item);
+        op.range = [op.range[0], op.range[0] + Math.max(op.items.length - 1, 0)];
+    }
+    if (counts.size && payload.groups) payload.groups = payload.groups.filter(g => counts.get(g.id)).map(g => ({ ...g, count: counts.get(g.id) ?? 0 }));
+}
+
+function memberListInterceptor(payload: MemberListUpdate) {
     if (payload.type !== "GUILD_MEMBER_LIST_UPDATE" || !payload.guildId) return false;
     const channelId = answeredListChannels.get(payload.guildId);
-    if (channelId) payload.id = ChannelMemberStore.getProps(payload.guildId, channelId).listId.slice(payload.guildId.length + 1);
+    if (!channelId) return false;
+    payload.id = ChannelMemberStore.getProps(payload.guildId, channelId).listId.slice(payload.guildId.length + 1);
+    hideMembersWithoutAccess(payload, payload.guildId, channelId);
     return false;
 }
 
