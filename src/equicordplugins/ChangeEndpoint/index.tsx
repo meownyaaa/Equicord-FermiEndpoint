@@ -1158,7 +1158,7 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
                         }}
                     >
                         {channel.icon
-                            ? <img src={`https://${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                            ? <img src={`${location.protocol}//${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                             : <WebsiteIcon />}
                     </div>
                     <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
@@ -1199,7 +1199,7 @@ function saveAccountAvatar() {
     settings.store.accountAvatars = { ...settings.plain.accountAvatars, [user.id]: { url, backend: connectedBackend } };
 }
 
-const withHttps = (endpoint: string) => /^\w+:\/\//.test(endpoint) ? endpoint : "https:" + endpoint;
+const withHttps = (endpoint: string) => /^\w+:\/\//.test(endpoint) ? endpoint : (/^http:\/\//i.test(getApiEndpoint() ?? "") ? "http:" : "https:") + endpoint;
 
 // harmony rejects identify properties its schema doesn't list, and discord keeps adding new ones
 const IDENTIFY_PROPERTIES = new Set([
@@ -1648,7 +1648,7 @@ export default definePlugin({
         let Icon = channelIconComponents.get(key);
         if (!Icon) {
             Icon = ErrorBoundary.wrap(({ className }: { className?: string; }) => (
-                <img className={className} src={`https://${getCdnHost()}/channel-icons/${key}.png`} alt="" />
+                <img className={className} src={`${location.protocol}//${getCdnHost()}/channel-icons/${key}.png`} alt="" />
             ), { noop: true });
             channelIconComponents.set(key, Icon);
         }
