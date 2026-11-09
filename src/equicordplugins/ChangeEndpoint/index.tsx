@@ -1158,7 +1158,7 @@ const ChannelIconEditor = ErrorBoundary.wrap(function ({ channel }: { channel: C
                         }}
                     >
                         {channel.icon
-                            ? <img src={`${location.protocol}//${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                            ? <img src={`${apiScheme()}//${getCdnHost()}/channel-icons/${channel.id}/${channel.icon}.png`} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                             : <WebsiteIcon />}
                     </div>
                     <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFileChosen} />
@@ -1199,7 +1199,8 @@ function saveAccountAvatar() {
     settings.store.accountAvatars = { ...settings.plain.accountAvatars, [user.id]: { url, backend: connectedBackend } };
 }
 
-const withHttps = (endpoint: string) => /^\w+:\/\//.test(endpoint) ? endpoint : (/^http:\/\//i.test(getApiEndpoint() ?? "") ? "http:" : "https:") + endpoint;
+const apiScheme = () => /^http:\/\//i.test(getApiEndpoint() ?? "") ? "http:" : "https:";
+const withHttps = (endpoint: string) => /^\w+:\/\//.test(endpoint) ? endpoint : apiScheme() + endpoint;
 
 // harmony rejects identify properties its schema doesn't list, and discord keeps adding new ones
 const IDENTIFY_PROPERTIES = new Set([
@@ -1614,6 +1615,8 @@ export default definePlugin({
 
     withHttps,
 
+    apiScheme,
+
     guildifyAst,
 
     resolveGifUrl(item: { url: string; src?: string; gifSrc?: string; }) {
@@ -1648,7 +1651,7 @@ export default definePlugin({
         let Icon = channelIconComponents.get(key);
         if (!Icon) {
             Icon = ErrorBoundary.wrap(({ className }: { className?: string; }) => (
-                <img className={className} src={`${location.protocol}//${getCdnHost()}/channel-icons/${key}.png`} alt="" />
+                <img className={className} src={`${apiScheme()}//${getCdnHost()}/channel-icons/${key}.png`} alt="" />
             ), { noop: true });
             channelIconComponents.set(key, Icon);
         }
@@ -2383,6 +2386,13 @@ export default definePlugin({
             replacement: {
                 match: /"https:"\+window\.GLOBAL_ENV\.API_ENDPOINT(?=\+\()/,
                 replace: "($self.withHttps(window.GLOBAL_ENV.API_ENDPOINT))"
+            }
+        },
+        {
+            find: "getGuildHomeHeaderURL:",
+            replacement: {
+                match: /`https:\/\/(?=\$\{\i\})/g,
+                replace: "`${$self.apiScheme()}//"
             }
         },
         {
