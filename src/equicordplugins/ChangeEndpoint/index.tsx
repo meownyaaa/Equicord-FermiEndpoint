@@ -2396,6 +2396,13 @@ export default definePlugin({
             }
         },
         {
+            find: ".BADGE_ICON(",
+            replacement: {
+                match: /`https:\/\/(?=\$\{\i\}\/badge-icons\/)/,
+                replace: "`${$self.apiScheme()}//"
+            }
+        },
+        {
             find: "_getGatewayUrl(){",
             replacement: {
                 match: /(?<=_getGatewayUrl\(\)\{return null!=this\.resumeUrl\?this\.resumeUrl:)\i(?=\})/,
