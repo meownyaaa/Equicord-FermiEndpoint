@@ -5,19 +5,13 @@
  */
 
 import { classNameFactory } from "@utils/css";
-import balanceLogo from "file://assets/balance.svg?base64";
-import braveryLogo from "file://assets/bravery.svg?base64";
-import brillianceLogo from "file://assets/brilliance.svg?base64";
-import patternImage from "file://assets/pattern.svg?base64";
-import badgePerk from "file://assets/perk-badge.svg?base64";
-import challengesPerk from "file://assets/perk-challenges.svg?base64";
-import newsletterPerk from "file://assets/perk-newsletter.svg?base64";
 
 export const cl = classNameFactory("vc-hypesquad-");
 
 export const HYPESQUAD_ONLINE = "/hypesquad/online";
 
-const svg = (base64: string) => `data:image/svg+xml;base64,${base64}`;
+// the 2019 art is still served from discord's static assets
+const asset = (hash: string) => `https://discord.com/assets/${hash}.svg`;
 
 export type House = 1 | 2 | 3;
 
@@ -25,21 +19,21 @@ export const HOUSES: Record<House, { name: string; flag: number; logo: string; d
     1: {
         name: "Bravery",
         flag: 1 << 6,
-        logo: svg(braveryLogo),
+        logo: asset("a359371246d6353de6bc32715e092eba"),
         description: "The universe needs people to lead the charge with confident optimism and tenacity. Without the brave, the HypeSquad would descend into chaos.",
         quizBody: "The House of Bravery thanks you for joining our efforts to preserve the sanctity of the land and maintain the legacy of Renwil. Your bravery is comparable to that of a thousand gallant warriors and without your leadership and prowess, we would be much closer to descending into chaos."
     },
     2: {
         name: "Brilliance",
         flag: 1 << 7,
-        logo: svg(brillianceLogo),
+        logo: asset("8c59bddd746488fe8acf23d8d36c1a60"),
         description: "It takes patience and discipline to become a vital member of the universe. Without brilliance, the HypeSquad would descend into chaos.",
         quizBody: "The House of Brilliance thanks you for joining our efforts to protect the land and maintain the legacy of Urdim. Your execution of strategies is that of a master tactician and without your calculated approach to any conflicts that comes your way, we would be much closer to descending into chaos."
     },
     3: {
         name: "Balance",
         flag: 1 << 8,
-        logo: svg(balanceLogo),
+        logo: asset("07ed671b6c823a6cae5be39860ac8bf0"),
         description: "Harmony and poise are necessary to create equilibrium in the universe. Without balance, the HypeSquad would descend into chaos.",
         quizBody: "The House of Balance thanks you for joining our efforts to protect the land and maintain the legacy of Arame. Your ability to stay stout and steadfast in times of uncertainty is admirable. Without your natural understanding of both your environment and your inner self, we would be much closer to descending into chaos."
     }
@@ -47,21 +41,21 @@ export const HOUSES: Record<House, { name: string; flag: number; logo: string; d
 
 export const houseOf = (flags: number) => ([1, 2, 3] as const).find(house => flags & HOUSES[house].flag) ?? null;
 
-export const PATTERN = svg(patternImage);
+export const PATTERN = asset("c48ff253859d29a8825ddb00b59a4565");
 
 export const PERKS = [
     {
-        icon: svg(newsletterPerk),
+        icon: asset("c970061def69b8226617841ca3089219"),
         title: "Super Secret Newsletter",
         description: "We regularly send out newsletters with contests, giveaways, and more."
     },
     {
-        icon: svg(badgePerk),
+        icon: asset("46b24114f7276738329be3ae84e22da4"),
         title: "Hype Profile Badge",
         description: "Get a unique profile badge to rep the HypeSquad House you're sorted into."
     },
     {
-        icon: svg(challengesPerk),
+        icon: asset("b13ade832d7f19e30c5d2452b6cbdd53"),
         title: "Squad Challenges",
         description: "Rep your house and participate in challenges against other HypeSquad houses."
     }
