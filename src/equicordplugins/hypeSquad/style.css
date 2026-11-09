@@ -1,0 +1,234 @@
+.vc-hypesquad-tab {
+    user-select: text;
+}
+
+.vc-hypesquad-intro {
+    margin-bottom: 40px;
+    text-align: center;
+}
+
+.vc-hypesquad-intro-header {
+    font-size: 36px;
+    line-height: 44px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--header-primary);
+}
+
+.vc-hypesquad-intro-blurb {
+    font-size: 20px;
+    line-height: 30px;
+    color: var(--text-default);
+}
+
+.vc-hypesquad-membership {
+    border-radius: 8px;
+    margin-bottom: 30px;
+    overflow: hidden;
+    padding: 30px;
+    position: relative;
+    color: #fff;
+}
+
+.vc-hypesquad-house-1 {
+    background-color: #9c84ef;
+}
+
+.vc-hypesquad-house-2 {
+    background-color: #f47b67;
+}
+
+.vc-hypesquad-house-3 {
+    background-color: #45ddc0;
+}
+
+.vc-hypesquad-pattern {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: bottom;
+    opacity: 0.15;
+    pointer-events: none;
+}
+
+.vc-hypesquad-membership-content {
+    position: relative;
+}
+
+.vc-hypesquad-membership-row {
+    display: flex;
+    gap: 20px;
+}
+
+.vc-hypesquad-membership .vc-hypesquad-your-house,
+.vc-hypesquad-membership .vc-hypesquad-house-name,
+.vc-hypesquad-membership .vc-hypesquad-house-description,
+.vc-hypesquad-membership .vc-hypesquad-switch {
+    color: #fff;
+}
+
+.vc-hypesquad-your-house {
+    margin-bottom: 16px;
+    text-transform: uppercase;
+}
+
+.vc-hypesquad-house-name {
+    font-size: 24px;
+    line-height: 30px;
+    margin-bottom: 8px;
+}
+
+.vc-hypesquad-house-description {
+    margin-bottom: 20px;
+}
+
+.vc-hypesquad-logo-wrapper {
+    background: #fff;
+    border-radius: 100%;
+    position: relative;
+    flex: 0 0 100px;
+    height: 100px;
+}
+
+.vc-hypesquad-logo {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 70px;
+    height: 70px;
+    transform: translate(-50%, -50%);
+    filter: invert(1);
+}
+
+.vc-hypesquad-house-1 .vc-hypesquad-logo,
+.vc-hypesquad-house-1 .vc-hypesquad-quiz-logo {
+    transform: translate(-50%, -45%);
+}
+
+.vc-hypesquad-switch {
+    border-top: 1px solid rgb(255 255 255 / 10%);
+    padding-top: 26px;
+    text-align: center;
+}
+
+.vc-hypesquad-switch-action {
+    color: rgb(255 255 255 / 70%);
+    margin-left: 4px;
+    transition: color 0.1s;
+}
+
+.vc-hypesquad-switch-action:hover {
+    color: #fff;
+}
+
+.vc-hypesquad-join {
+    margin-bottom: 40px;
+}
+
+.vc-hypesquad-join-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.vc-hypesquad-newsletter {
+    opacity: 0.7;
+    text-align: center;
+}
+
+.vc-hypesquad-perks {
+    margin-bottom: 40px;
+}
+
+.vc-hypesquad-perks-heading {
+    text-align: center;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+}
+
+.vc-hypesquad-perk {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px 0;
+}
+
+.vc-hypesquad-perk + .vc-hypesquad-perk {
+    border-top: 1px solid var(--border-subtle);
+}
+
+.vc-hypesquad-perk-icon {
+    flex: 0 0 64px;
+    height: 64px;
+}
+
+.vc-hypesquad-perk-title {
+    color: var(--header-primary);
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.vc-hypesquad-perk-description {
+    color: var(--text-default);
+}
+
+.vc-hypesquad-leave {
+    border-top: 1px solid var(--border-subtle);
+    margin-bottom: 40px;
+    padding-top: 40px;
+    text-align: center;
+}
+
+.vc-hypesquad-leave-action {
+    margin-left: 4px;
+}
+
+.vc-hypesquad-leave-error {
+    color: var(--text-feedback-critical);
+    margin-bottom: 8px;
+}
+
+.vc-hypesquad-quiz-content {
+    padding: 0 16px 16px;
+}
+
+.vc-hypesquad-quiz-separator {
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    margin: 16px 0;
+}
+
+.vc-hypesquad-quiz-select {
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.vc-hypesquad-quiz-logo-wrapper {
+    border-radius: 100%;
+    margin: 0 auto 20px;
+    position: relative;
+    width: 160px;
+    height: 160px;
+}
+
+.vc-hypesquad-quiz-logo {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 115px;
+    height: 115px;
+    transform: translate(-50%, -50%);
+}
+
+.vc-hypesquad-quiz-heading {
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+.vc-hypesquad-quiz-body {
+    line-height: 18px;
+}
