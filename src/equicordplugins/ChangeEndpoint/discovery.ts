@@ -30,10 +30,12 @@ const getJson = (url: string) =>
 export async function discover(address: string): Promise<Discovered> {
     const host = simplifyHost(address);
     if (!host) throw new Error("Enter a server address.");
+    const secure = !/^http:\/\//i.test(address.trim());
+    const http = secure ? "https" : "http";
 
-    const client = await getJson(`https://${host}/.well-known/spacebar/client`);
-    const known = client ? null : await getJson(`https://${host}/.well-known/spacebar`);
-    const seeds = [normalize(client?.api?.baseUrl), normalize(known?.api), `https://${host}/api`, `https://api.${host}/api`].filter((s): s is string => !!s);
+    const client = await getJson(`${http}://${host}/.well-known/spacebar/client`);
+    const known = client ? null : await getJson(`${http}://${host}/.well-known/spacebar`);
+    const seeds = [normalize(client?.api?.baseUrl), normalize(known?.api), `${http}://${host}/api`, `${http}://api.${host}/api`].filter((s): s is string => !!s);
     const apiSeeds = seeds.flatMap(seed => seed.endsWith("/api") ? [seed] : [`${seed}/api`, seed]);
 
     let domains: Record<string, unknown> | null = null;
@@ -49,8 +51,8 @@ export async function discover(address: string): Promise<Discovered> {
         return {
             name: name || undefined,
             api,
-            cdn: normalize(client?.cdn?.baseUrl) ?? normalize(domains?.cdn) ?? `https://cdn.${host}`,
-            gateway: normalize(client?.gateway?.baseUrl) ?? normalize(domains?.gateway) ?? `wss://gateway.${host}`
+            cdn: normalize(client?.cdn?.baseUrl) ?? normalize(domains?.cdn) ?? `${http}://cdn.${host}`,
+            gateway: normalize(client?.gateway?.baseUrl) ?? normalize(domains?.gateway) ?? `${secure ? "wss" : "ws"}://gateway.${host}`
         };
     }
     throw new Error(`Couldn't find a Spacebar server at ${host}.`);

@@ -24,7 +24,7 @@ export function simplifyHost(host: string): string {
 // fix some bullshit where itll go https://https//*server url* lol
 const HOST_ONLY_ADVANCED_FIELDS = new Set<EndpointField>(["cdnHost", "mediaProxyEndpoint"]);
 
-function resolveEndpoint(field: EndpointField, build: (host: string) => string, backend = settings.store.backend): string | null {
+function resolveEndpoint(field: EndpointField, build: (host: string, secure: boolean) => string, backend = settings.store.backend): string | null {
     const predefined = PREDEFINED_SERVERS.find(s => s.id === backend);
     const custom = predefined ? undefined : customServer(backend);
     const explicit = predefined ? predefined.endpoints : custom?.type === "advanced" ? custom : undefined;
@@ -36,7 +36,7 @@ function resolveEndpoint(field: EndpointField, build: (host: string) => string, 
     }
 
     const host = predefined?.host ?? custom?.host?.trim();
-    return host ? build(simplifyHost(host)) : null;
+    return host ? build(simplifyHost(host), !/^http:\/\//i.test(host)) : null;
 }
 
 export const getApiEndpoint = (backend?: string) =>
@@ -46,7 +46,7 @@ export const getCdnHost = (backend?: string) =>
     resolveEndpoint("cdnHost", host => `cdn.${host}`, backend);
 
 export const getGatewayEndpoint = (backend?: string) =>
-    resolveEndpoint("gatewayEndpoint", host => `wss://gateway.${host}`, backend);
+    resolveEndpoint("gatewayEndpoint", (host, secure) => `${secure ? "wss" : "ws"}://gateway.${host}`, backend);
 
 export interface EndpointEnv {
     API_ENDPOINT?: string;
