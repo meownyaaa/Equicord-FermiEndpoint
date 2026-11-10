@@ -196,3 +196,17 @@
     flex-wrap: wrap;
     gap: 12px;
 }
+
+.vc-endpoint-token-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-radius: 10px;
+    padding: 0.85em 1.1em;
+}
+
+.vc-endpoint-token {
+    flex: 1;
+    font-family: var(--font-code);
+    word-break: break-all;
+}

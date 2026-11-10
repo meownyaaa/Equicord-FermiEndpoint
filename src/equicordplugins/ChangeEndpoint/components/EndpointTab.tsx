@@ -14,9 +14,10 @@ import { Link } from "@components/Link";
 import { Paragraph } from "@components/Paragraph";
 import { SettingsTab, wrapTab } from "@components/settings";
 import { type CustomServer,PREDEFINED_SERVERS } from "@equicordplugins/ChangeEndpoint/servers";
+import { copyWithToast } from "@utils/discord";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
-import { Alerts, React, TextInput, UserStore, useState } from "@webpack/common";
+import { Alerts, React, RestAPI, TextInput, UserStore, useState } from "@webpack/common";
 
 import ChangeEndpoint from "..";
 import { discover } from "../discovery";
@@ -204,6 +205,44 @@ function AccountLinkRow() {
     );
 }
 
+function RegistrationTokens() {
+    const [tokens, setTokens] = useState<string[]>([]);
+    const [generating, setGenerating] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const generate = async () => {
+        setGenerating(true);
+        setError(null);
+        try {
+            const { body } = await RestAPI.get({ url: "/auth/generate-registration-tokens", query: { count: 1, length: 32 } });
+            setTokens(previous => [...body.tokens, ...previous]);
+        } catch (e) {
+            setError((e as { body?: { message?: string; }; }).body?.message ?? "Couldn't generate a token.");
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    return (
+        <>
+            <Heading tag="h2" className={Margins.top24}>Registration Tokens</Heading>
+            <Paragraph className={classes(Margins.bottom8, "vc-endpoint-muted")}>
+                One time tokens that let someone register even while registration is closed. They go in the Registration Token box on the sign up page.
+            </Paragraph>
+            <Button size="small" variant="secondary" disabled={generating} onClick={generate}>
+                {generating ? "Generating..." : "Generate Token"}
+            </Button>
+            {error && <Paragraph size="sm" className={classes(Margins.top8, "vc-endpoint-muted")}>{error}</Paragraph>}
+            {tokens.map(token => (
+                <Card key={token} className={classes(Margins.top8, "vc-endpoint-token-card")}>
+                    <Paragraph size="sm" className="vc-endpoint-token">{token}</Paragraph>
+                    <Button size="small" variant="secondary" onClick={() => copyWithToast(token)}>Copy</Button>
+                </Card>
+            ))}
+        </>
+    );
+}
+
 function EndpointTab() {
     settings.use(SETTING_KEYS);
     const [addingCustom, setAddingCustom] = useState(false);
@@ -338,6 +377,8 @@ function EndpointTab() {
                 once the switch finishes).
             </Paragraph>
             <AccountLinkRow />
+
+            {ChangeEndpoint.canCreateRegistrationTokens() && <RegistrationTokens />}
 
             <Heading tag="h4" className={Margins.top24}>About</Heading>
             <Paragraph size="sm" className="vc-endpoint-muted">Spacebar is the default instance. Add a custom server to connect to a different one instead.</Paragraph>

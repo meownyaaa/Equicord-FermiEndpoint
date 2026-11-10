@@ -978,6 +978,43 @@ let originalXHRSend: typeof XMLHttpRequest.prototype.send | null = null;
 let originalXHRSetHeader: typeof XMLHttpRequest.prototype.setRequestHeader | null = null;
 const xhrUrls = new WeakMap<XMLHttpRequest, string>();
 const blockedRequests = new WeakSet<XMLHttpRequest>();
+const registerRequests = new WeakSet<XMLHttpRequest>();
+let registrationToken = new URLSearchParams(location.search).get("token") ?? "";
+const REGISTRATION_TOKEN_RIGHTS = 1n | 1n << 50n;
+let canCreateRegistrationTokens = false;
+
+function sendWithRegistrationToken(send: () => void) {
+    const { href } = location;
+    const referrer = document.createElement("meta");
+    referrer.name = "referrer";
+    referrer.content = "unsafe-url";
+    history.replaceState(history.state, "", `/register?token=${encodeURIComponent(registrationToken)}`);
+    document.head.append(referrer);
+    try {
+        send();
+    } finally {
+        referrer.remove();
+        history.replaceState(history.state, "", href);
+    }
+}
+
+function installRegistrationTokenHook() {
+    const { open, send } = XMLHttpRequest.prototype;
+    const hookedOpen = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
+        if (method.toUpperCase() === "POST" && new URL(url, location.origin).pathname.endsWith("/auth/register")) registerRequests.add(this);
+        return Reflect.apply(open, this, [method, url, ...rest]);
+    };
+    const hookedSend = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+        if (registerRequests.delete(this) && registrationToken) return sendWithRegistrationToken(() => send.call(this, body));
+        return send.call(this, body);
+    };
+    XMLHttpRequest.prototype.open = hookedOpen;
+    XMLHttpRequest.prototype.send = hookedSend;
+    return () => {
+        if (XMLHttpRequest.prototype.open === hookedOpen) XMLHttpRequest.prototype.open = open;
+        if (XMLHttpRequest.prototype.send === hookedSend) XMLHttpRequest.prototype.send = send;
+    };
+}
 const flaggedGuildProfileRequests = new WeakSet<XMLHttpRequest>();
 const guildEditRequests = new WeakMap<XMLHttpRequest, string>();
 
@@ -1280,6 +1317,7 @@ function applyBackendInPlace(id: string) {
     memberListResync = null;
     lastSignature = null;
     pendingLoginBackend = null;
+    canCreateRegistrationTokens = false;
     instanceInfo = null;
     gifProviders = [];
     if (!syncing) return;
@@ -1326,6 +1364,16 @@ const AddAccountBackendButton = ErrorBoundary.wrap(function ({ openMenu }: { ope
             {pending ? `Backend: ${backendName(pending)}` : "Switch Backend"}
         </Button>
     );
+}, { noop: true });
+
+interface RegistrationTokenFieldProps {
+    Input: ComponentType<{ label: string; name: string; value: string; autoComplete: string; onChange(value: string): void; }>;
+}
+
+const RegistrationTokenField = ErrorBoundary.wrap(function ({ Input }: RegistrationTokenFieldProps) {
+    const [value, setValue] = useState(registrationToken);
+    useEffect(installRegistrationTokenHook, []);
+    return <Input label="Registration Token" name="registration_token" value={value} autoComplete="off" onChange={token => setValue(registrationToken = token.trim())} />;
 }, { noop: true });
 
 const GIF_API_RE = /\/gifs\/(?:search|trending|trending-gifs|suggest|trending-search)$/;
@@ -1760,6 +1808,10 @@ export default definePlugin({
         return { ...instanceInfo, frontPage: httpUrl(instanceInfo.frontPage), tosPage: httpUrl(instanceInfo.tosPage) };
     },
 
+    canCreateRegistrationTokens() {
+        return settings.store.backend === connectedBackend && canCreateRegistrationTokens;
+    },
+
     reorderChannelsForSpacebar(guildId: string, updates: ChannelPositionUpdate[]) {
         const changes = new Map(updates.map(u => [u.id, u]));
         const channels = Object.values(ChannelStore.getMutableGuildChannelsForGuild(guildId))
@@ -2014,6 +2066,8 @@ export default definePlugin({
         );
     },
 
+    RegistrationTokenField,
+
     renderAddAccountBackendButton() {
         return <AddAccountBackendButton openMenu={(e, onSelect, selected) => this.openBackendMenu(e, onSelect, selected)} />;
     },
@@ -2092,7 +2146,8 @@ export default definePlugin({
         },
         CURRENT_USER_UPDATE: saveAccountAvatar
     } : {
-        CONNECTION_OPEN() {
+        CONNECTION_OPEN({ user }: { user: { rights?: string; }; }) {
+            canCreateRegistrationTokens = (BigInt(user.rights ?? "0") & REGISTRATION_TOKEN_RIGHTS) !== 0n;
             linkCurrentAccount();
             saveAccountAvatar();
             loadGifProviders();
@@ -3011,6 +3066,13 @@ export default definePlugin({
             replacement: {
                 match: /(?<=leading:)\(0,(\i)\.jsx\)\(\i\.\i,\{variant:"secondary",size:"md",onClick:\i,text:\i\.intl\.string\(\i\.\i#{intl::BACK}\),type:"button"\}\)/,
                 replace: '(0,$1.jsxs)("div",{style:{display:"flex",alignItems:"center",gap:"8px"},children:[$self.renderAddAccountBackendButton(),$&]})'
+            }
+        },
+        {
+            find: ".REGISTER_INPUT_FOCUS,{field:",
+            replacement: {
+                match: /(?<=\(0,(\i)\.jsx\)\((\i\.\i),\{label:[^{}]{0,80},name:"password".{0,600}?)\(0,\i\.jsx\)\(\i,\{consent:/g,
+                replace: "(0,$1.jsx)($self.RegistrationTokenField,{Input:$2}),$&"
             }
         },
         {
