@@ -7,7 +7,7 @@
 import "./components/styles.css";
 
 import { Settings } from "@api/Settings";
-import { Button } from "@components/Button";
+import { Button, TextButton } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { FormSwitch } from "@components/FormSwitch";
 import { WebsiteIcon } from "@components/Icons";
@@ -16,13 +16,13 @@ import SettingsPlugin from "@plugins/_core/settings";
 import { getIntlMessage, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import { parseUrl, removeFromArray } from "@utils/misc";
-import { openModalLazy } from "@utils/modal";
+import { openModal, openModalLazy } from "@utils/modal";
 import { escapeRegExp } from "@utils/text";
 import definePlugin, { PluginNative } from "@utils/types";
 import type { Channel, ExpressionPickerStoreState, GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType, CloudUploadPlatform } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, CloudUploader, Constants, ContextMenuApi, DraftType, ExpressionPickerStore, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageActions, MessageStore, NavigationRouter, PendingReplyStore, PermissionsBits, PresenceStore, ReactDOM, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, CloudUploader, Constants, ContextMenuApi, DraftType, ExpressionPickerStore, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageActions, Modal, NavigationRouter, PendingReplyStore, PermissionsBits, PermissionStore, PresenceStore, ReactDOM, ReadStateStore, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -218,78 +218,28 @@ function stopGuildOrderSync() {
     GUILD_ORDER_EVENTS.forEach(e => FluxDispatcher.unsubscribe(e, schedulePush));
 }
 
-const DM_CHANNEL_TYPE = 1;
-const GROUP_DM_CHANNEL_TYPE = 3;
-const DM_POLL_INTERVAL = 90 * 1000;
+let started = false;
 
-let dmPollTimer: ReturnType<typeof setTimeout> | null = null;
-let dmPollingStarted = false;
-let dmPollRunning = false;
+async function restoreDMPings() {
+    const me = UserStore.getCurrentUser().id;
+    await Promise.all(ChannelStore.getSortedPrivateChannels().map(async channel => {
+        const ack = ReadStateStore.ackMessageId(channel.id);
+        if (!channel.lastMessageId || channel.lastMessageId === ack || ReadStateStore.getMentionCount(channel.id) > 0) return;
+        if (ack && !ReadStateStore.hasUnread(channel.id)) return;
 
-async function checkChannelForMissedMessage(channel: { id: string; last_message_id: string | null; type: number; }) {
-    if (channel.type !== DM_CHANNEL_TYPE && channel.type !== GROUP_DM_CHANNEL_TYPE) return;
-    if (!channel.last_message_id) return;
+        const { body } = await RestAPI.get({ url: Constants.Endpoints.MESSAGES(channel.id), query: ack ? { after: ack, limit: 100 } : { limit: 100 } });
+        const missed: string[] = body.filter((message: { author: { id: string; }; }) => message.author.id !== me).map((message: { id: string; }) => message.id);
+        if (!missed.length || ReadStateStore.getMentionCount(channel.id) > 0) return;
 
-    if (SelectedChannelStore.getChannelId() === channel.id && document.hasFocus()) return;
-
-    const localChannel = ChannelStore.getChannel(channel.id);
-    if (!localChannel || localChannel.lastMessageId === channel.last_message_id) return;
-    if (MessageStore.getMessage(channel.id, channel.last_message_id)) return;
-
-    try {
-        const res = await RestAPI.get({
-            url: `/channels/${channel.id}/messages`,
-            query: { limit: 1 }
-        });
-        const message = res?.body?.[0];
-        if (!message) return;
-
-        logger.info(`Replaying missed message in DM ${channel.id} that the gateway never delivered`);
-
+        const oldest = missed.reduce((a, b) => SnowflakeUtils.compare(a, b) < 0 ? a : b);
         FluxDispatcher.dispatch({
-            type: "MESSAGE_CREATE",
+            type: "MESSAGE_ACK",
             channelId: channel.id,
-            message,
-            optimistic: false,
-            isPushNotification: false
+            messageId: ack ?? SnowflakeUtils.fromTimestamp(SnowflakeUtils.extractTimestamp(oldest) - 1),
+            manual: true,
+            newMentionCount: missed.length
         });
-    } catch (e) {
-        logger.error(`Failed to fetch latest message for channel ${channel.id}`, e);
-    }
-}
-// possibly non functional? i dont get enough dms to know
-// gotta check that in the future, but its low priority
-
-async function pollDMUnreads() {
-    dmPollRunning = true;
-    try {
-        const res = await RestAPI.get({ url: "/users/@me/channels" });
-        const channels: Array<{ id: string; last_message_id: string | null; type: number; }> = res?.body ?? [];
-        await Promise.all(channels.map(checkChannelForMissedMessage));
-    } catch (e) {
-        logger.error("Failed to poll DM unreads", e);
-    } finally {
-        dmPollRunning = false;
-        if (dmPollingStarted) dmPollTimer = setTimeout(pollDMUnreads, DM_POLL_INTERVAL);
-    }
-}
-
-function onDMPollConnectionOpen() {
-    if (dmPollTimer || dmPollRunning) return;
-    pollDMUnreads();
-}
-
-function startDMUnreadPoll() {
-    dmPollingStarted = true;
-    FluxDispatcher.subscribe("CONNECTION_OPEN", onDMPollConnectionOpen);
-    onDMPollConnectionOpen();
-}
-
-function stopDMUnreadPoll() {
-    dmPollingStarted = false;
-    FluxDispatcher.unsubscribe("CONNECTION_OPEN", onDMPollConnectionOpen);
-    if (dmPollTimer) clearTimeout(dmPollTimer);
-    dmPollTimer = null;
+    }));
 }
 
 let originalSend: typeof WebSocket.prototype.send | null = null;
@@ -606,7 +556,7 @@ const BOOST_FEATURES: GuildFeatures[] = [
     "MORE_EMOJI", "MORE_STICKERS", "MORE_SOUNDBOARD", "ROLE_ICONS", "ROLE_SUBSCRIPTIONS_ENABLED"
 ];
 
-const instanceLimits = { maxEmojis: 2000, maxStickers: 500, maxAttachmentSize: 0, maxAttachments: 10, maxBio: 190, maxPronouns: 40, maxMessageLength: 1048576, maxChannelName: 32, maxTopic: 1024, maxUsername: 32 };
+const instanceLimits = { maxEmojis: 2000, maxStickers: 500, maxAttachmentSize: 0, maxAttachments: 10, maxBio: 190, maxPronouns: 40, maxMessageLength: 1048576, maxChannelName: 32, maxTopic: 1024 };
 
 interface InstanceInfo {
     instanceName?: string;
@@ -724,7 +674,6 @@ async function loadInstanceLimits() {
     instanceLimits.maxMessageLength = body?.message?.maxCharacters ?? instanceLimits.maxMessageLength;
     instanceLimits.maxChannelName = body?.channel?.maxName ?? instanceLimits.maxChannelName;
     instanceLimits.maxTopic = body?.channel?.maxTopic ?? instanceLimits.maxTopic;
-    instanceLimits.maxUsername = body?.user?.maxUsername ?? instanceLimits.maxUsername;
 }
 
 function boostPerks(realCount?: number) {
@@ -1304,9 +1253,8 @@ function applyBackendInPlace(id: string) {
     const socket = GatewayConnectionStore.getSocket();
     socket.resumeUrl = socket.sessionId = null;
 
-    const syncing = dmPollingStarted;
+    const syncing = started;
     stopGuildOrderSync();
-    stopDMUnreadPoll();
     releaseVoiceState();
     releaseSeekableMedia();
     answeredListChannels.clear();
@@ -1322,7 +1270,6 @@ function applyBackendInPlace(id: string) {
     gifProviders = [];
     if (!syncing) return;
     startGuildOrderSync();
-    startDMUnreadPoll();
 }
 
 function switchBackendTo(id: string) {
@@ -1352,14 +1299,17 @@ function openAccountOn(userId: string, token: string, backend: string) {
 
 const AddAccountBackendButton = ErrorBoundary.wrap(function ({ openMenu }: { openMenu(e: React.MouseEvent, onSelect: (id: string) => void, selected: string | null): void; }) {
     const [pending, setPending] = useState(pendingLoginBackend);
-    useEffect(() => () => { pendingLoginBackend = null; }, []);
+    useEffect(() => {
+        pendingLoginBackend = pending;
+        return () => { pendingLoginBackend = null; };
+    }, [pending]);
 
     return (
         <Button
             type="button"
             size="small"
             variant="secondary"
-            onClick={e => openMenu(e, id => onDiscord || id === "discord" ? reloadOnBackend(id) : setPending(pendingLoginBackend = id === connectedBackend ? null : id), pending ?? connectedBackend)}
+            onClick={e => openMenu(e, id => onDiscord || id === "discord" ? reloadOnBackend(id) : setPending(id === connectedBackend ? null : id), pending ?? connectedBackend)}
         >
             {pending ? `Backend: ${backendName(pending)}` : "Switch Backend"}
         </Button>
@@ -1372,7 +1322,9 @@ interface RegistrationTokenFieldProps {
 
 const RegistrationTokenField = ErrorBoundary.wrap(function ({ Input }: RegistrationTokenFieldProps) {
     const [value, setValue] = useState(registrationToken);
+    const [open, setOpen] = useState(!!registrationToken);
     useEffect(installRegistrationTokenHook, []);
+    if (!open) return <TextButton type="button" variant="link" className="vc-endpoint-token-toggle" onClick={() => setOpen(true)}>Have a registration token?</TextButton>;
     return <Input label="Registration Token" name="registration_token" value={value} autoComplete="off" onChange={token => setValue(registrationToken = token.trim())} />;
 }, { noop: true });
 
@@ -1734,6 +1686,14 @@ export default definePlugin({
         switchBackendTo(id);
     },
 
+    reapplyEndpoints() {
+        if (onDiscord) return;
+        const gateway = window.GLOBAL_ENV.GATEWAY_ENDPOINT;
+        writeEndpointEnv(window.GLOBAL_ENV);
+        envRefreshers.forEach(refresh => refresh());
+        if (window.GLOBAL_ENV.GATEWAY_ENDPOINT !== gateway) showToast({ text: "The new gateway address is used from the next reload." });
+    },
+
     canSwitchInPlace(id: string) {
         return canSwitchInPlace(id);
     },
@@ -1896,10 +1856,6 @@ export default definePlugin({
         return name;
     },
 
-    maxUsername() {
-        return instanceLimits.maxUsername;
-    },
-
     maxStickers() {
         return instanceLimits.maxStickers;
     },
@@ -1930,8 +1886,13 @@ export default definePlugin({
         if (getApiEndpoint() == null) return;
         const selected = SelectedChannelStore.getChannelId();
         for (const [guildId, subscription] of Object.entries(subscriptions)) {
-            const { channels } = subscription;
-            if (!channels || !Object.keys(channels).length) continue;
+            if (!subscription.channels) continue;
+            const channels = Object.fromEntries(Object.entries(subscription.channels).filter(([id]) => {
+                const channel = ChannelStore.getChannel(id);
+                return channel && PermissionStore.can(PermissionsBits.VIEW_CHANNEL, channel);
+            }));
+            subscription.channels = channels;
+            if (!Object.keys(channels).length) continue;
             const answered = selected in channels ? selected : Object.keys(channels)[0];
             subscription.channels = { [answered]: channels[answered], ...channels };
             answeredListChannels.set(guildId, answered);
@@ -2029,23 +1990,23 @@ export default definePlugin({
         }
 
         const backends = [...PREDEFINED_SERVERS, ...settings.store.customServers].filter(s => hasEndpoints(s.id));
-        Alerts.show({
-            title: "Which backend is this account from?",
-            body: (
-                <>
-                    <Text size="md" weight="normal">ChangeEndpoint doesn't know where this account was made. Its token gets sent to whichever backend you pick, so only pick the one it really belongs to.</Text>
-                    <div className="vc-endpoint-backend-picker">
-                        {backends.map(s => (
-                            <Button key={s.id} variant={s.id === connectedBackend ? "primary" : "secondary"} onClick={() => { Alerts.close(); openAccountOn(userId, token, s.id); }}>
-                                {s.name}
-                            </Button>
-                        ))}
-                    </div>
-                </>
-            ),
-            confirmText: "Cancel",
-            confirmVariant: "secondary"
-        });
+        openModal(props => (
+            <Modal
+                {...props}
+                size="sm"
+                title="Which backend is this account from?"
+                subtitle="ChangeEndpoint doesn't know where this account was made. Its token gets sent to whichever backend you pick, so only pick the one it really belongs to."
+                actions={[{ text: "Cancel", variant: "secondary", onClick: () => props.onClose() }]}
+            >
+                <div className="vc-endpoint-backend-picker">
+                    {backends.map(s => (
+                        <Button key={s.id} variant={s.id === connectedBackend ? "primary" : "secondary"} onClick={() => { props.onClose(); openAccountOn(userId, token, s.id); }}>
+                            {s.name}
+                        </Button>
+                    ))}
+                </div>
+            </Modal>
+        ));
         return true;
     },
 
@@ -2151,6 +2112,7 @@ export default definePlugin({
             linkCurrentAccount();
             saveAccountAvatar();
             loadGifProviders();
+            restoreDMPings().catch(e => logger.warn("Couldn't restore DM pings", e));
             loadInstanceLimits().catch(e => logger.warn("Couldn't load instance limits, using Spacebar's defaults", e));
             loadInstanceInfo().catch(e => logger.warn("Couldn't load instance info", e));
         },
@@ -2249,7 +2211,7 @@ export default definePlugin({
 
         loadGifProviders();
         startGuildOrderSync();
-        startDMUnreadPoll();
+        started = true;
         installFetchSanitiser();
         installXHRSanitiser();
         installBoostPerkUnlocker();
@@ -2293,7 +2255,7 @@ export default definePlugin({
         removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
         if (onDiscord) return;
         stopGuildOrderSync();
-        stopDMUnreadPoll();
+        started = false;
         uninstallFetchSanitiser();
         uninstallXHRSanitiser();
         uninstallGatewaySendSanitiser();
@@ -2844,13 +2806,6 @@ export default definePlugin({
             replacement: {
                 match: /(?<=onChange:this\.handleNameChange,inputRef:this\.setInputRef,maxLength:)100(?=,)/,
                 replace: "$self.maxChannelName()"
-            }
-        },
-        {
-            find: 'name:"discriminator","aria-label"',
-            replacement: {
-                match: /(?<=name:"username",value:\i,maxLength:)32(?=,)/,
-                replace: "$self.maxUsername()"
             }
         },
         {

@@ -8,8 +8,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 1em;
-    border-radius: 12px;
-    padding: 1em 1.2em;
+    padding: 1em;
 }
 
 .vc-endpoint-status-left {
@@ -34,7 +33,7 @@
 .vc-endpoint-server-list {
     display: flex;
     flex-direction: column;
-    gap: 0.6em;
+    gap: 8px;
 }
 
 .vc-endpoint-server-card {
@@ -42,9 +41,8 @@
     align-items: center;
     justify-content: space-between;
     cursor: pointer;
-    border-radius: 10px;
-    padding: 0.85em 1.1em;
-    transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
+    padding: 0.75em 1em;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .vc-endpoint-server-card:hover {
@@ -52,13 +50,8 @@
     background-color: var(--background-modifier-hover);
 }
 
-.vc-endpoint-server-card:active {
-    transform: scale(0.995);
-}
-
 .vc-endpoint-server-card-active {
     border-color: var(--brand-500);
-    box-shadow: 0 0 0 1px var(--brand-500);
 }
 
 .vc-endpoint-server-card-actions {
@@ -93,8 +86,7 @@
 }
 
 .vc-endpoint-form {
-    border-radius: 10px;
-    padding: 1.1em;
+    padding: 1em;
     display: flex;
     flex-direction: column;
     gap: 0.2em;
@@ -109,6 +101,11 @@
     display: flex;
     align-items: center;
     gap: 1em;
+}
+
+.vc-endpoint-form-actions button {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .vc-endpoint-stuck-backdrop {
@@ -188,7 +185,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 16px;
 }
 
 .vc-endpoint-instance-links {
@@ -201,12 +197,15 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    border-radius: 10px;
-    padding: 0.85em 1.1em;
+    padding: 0.75em 1em;
 }
 
 .vc-endpoint-token {
     flex: 1;
     font-family: var(--font-code);
     word-break: break-all;
+}
+
+.vc-endpoint-token-toggle {
+    align-self: flex-start;
 }

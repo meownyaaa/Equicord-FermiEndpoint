@@ -38,5 +38,16 @@ export const PREDEFINED_SERVERS: PredefinedServer[] = [
             gatewayEndpoint: "wss://proxy.it-voip.4siwi.net:8098"
         }
     },
+    {
+        id: "hazletbar",
+        name: "Hazletbar",
+        host: "softgaypaws.com",
+        endpoints: {
+            apiEndpoint: "https://api.softgaypaws.com/api",
+            cdnHost: "cdn.softgaypaws.com",
+            gatewayEndpoint: "wss://gateway.softgaypaws.com",
+            mediaProxyEndpoint: "media.softgaypaws.com"
+        }
+    },
     { id: "discord", name: "Discord", host: "discord.com", endpoints: {} }
 ];

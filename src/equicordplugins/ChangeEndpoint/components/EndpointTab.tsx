@@ -8,6 +8,7 @@ import "./styles.css";
 
 import { Button, TextButton } from "@components/Button";
 import { Card } from "@components/Card";
+import { Divider } from "@components/Divider";
 import { Heading } from "@components/Heading";
 import { DoubleCheckmarkIcon, PencilIcon, PlusIcon, TrashIcon, WebsiteIcon } from "@components/Icons";
 import { Link } from "@components/Link";
@@ -22,7 +23,7 @@ import { Alerts, React, RestAPI, TextInput, UserStore, useState } from "@webpack
 import ChangeEndpoint from "..";
 import { discover } from "../discovery";
 import { settings } from "../settings";
-import { connectedBackend, hasEndpoints, prepareTokenForBackend } from "../utils";
+import { connectedBackend, hasEndpoints } from "../utils";
 
 const SETTING_KEYS = ["backend", "customServers", "accountBackends"] as Array<"backend" | "customServers" | "accountBackends">;
 
@@ -35,16 +36,6 @@ function serverName(id: string): string {
     if (predefined) return predefined.name;
     const custom = settings.store.customServers.find(s => s.id === id);
     return custom?.name ?? "Unknown Server";
-}
-
-function confirmRestart() {
-    Alerts.show({
-        title: "Restart Required",
-        body: <p style={{ textAlign: "center" }}>ChangeEndpoint needs a restart to connect to the new server.</p>,
-        confirmText: "Restart Now",
-        cancelText: "Later",
-        onConfirm: () => location.reload()
-    });
 }
 
 function activeServerLabel(): { name: string; host: string; } {
@@ -104,17 +95,12 @@ function CustomServerForm({ existing, onDone }: { existing?: CustomServer; onDon
             mediaProxyEndpoint: mediaProxyEndpoint.trim() || undefined
         };
 
-        const wasActive = settings.store.backend === existing?.id;
         settings.store.customServers = existing
             ? settings.plain.customServers.map(s => (s.id === existing.id ? entry : s))
             : [...settings.plain.customServers, entry];
 
         onDone();
-
-        if (wasActive || !existing) {
-            settings.store.backend = id;
-            confirmRestart();
-        }
+        if (id === connectedBackend) ChangeEndpoint.reapplyEndpoints();
     };
 
     return (
@@ -225,8 +211,10 @@ function RegistrationTokens() {
 
     return (
         <>
-            <Heading tag="h2" className={Margins.top24}>Registration Tokens</Heading>
-            <Paragraph className={classes(Margins.bottom8, "vc-endpoint-muted")}>
+            <Divider className={Margins.top20} />
+
+            <Heading className={Margins.top20}>Registration Tokens</Heading>
+            <Paragraph className={Margins.bottom16}>
                 One time tokens that let someone register even while registration is closed. They go in the Registration Token box on the sign up page.
             </Paragraph>
             <Button size="small" variant="secondary" disabled={generating} onClick={generate}>
@@ -251,7 +239,7 @@ function EndpointTab() {
     const { backend, customServers } = settings.store;
     const active = activeServerLabel();
     const info = ChangeEndpoint.instanceInfo();
-    const restartPending = backend !== connectedBackend;
+    const switchPending = backend !== connectedBackend;
     const editingServer = editingId ? customServers.find(s => s.id === editingId) : undefined;
 
     const selectServer = (id: string) => {
@@ -260,27 +248,21 @@ function EndpointTab() {
             Alerts.show({ title: "Missing Endpoints", body: `${serverName(id)} has no API or gateway set. Edit it before switching to it.`, confirmText: "Okay" });
             return;
         }
-        if (ChangeEndpoint.canSwitchInPlace(id)) return ChangeEndpoint.switchBackend(id);
-        prepareTokenForBackend(id);
-        settings.store.backend = id;
-        confirmRestart();
+        if (id === connectedBackend) settings.store.backend = id;
+        else ChangeEndpoint.switchBackend(id);
     };
 
     const removeCustomServer = (id: string) => {
         Alerts.show({
             title: "Remove Server?",
-            body: `This removes "${serverName(id)}" from your server list.`,
+            body: `This removes "${serverName(id)}" from your server list.${settings.store.backend === id ? " You're connected to it, so you'll be switched to Spacebar." : ""}`,
             confirmText: "Remove",
             confirmColor: "danger",
             cancelText: "Cancel",
             onConfirm: () => {
+                if (settings.store.backend === id) ChangeEndpoint.switchBackend(PREDEFINED_SERVERS[0].id);
                 settings.store.customServers = settings.plain.customServers.filter(s => s.id !== id);
                 settings.store.accountBackends = Object.fromEntries(Object.entries(settings.plain.accountBackends).filter(([, linked]) => linked !== id));
-                if (settings.store.backend === id) {
-                    prepareTokenForBackend(PREDEFINED_SERVERS[0].id);
-                    settings.store.backend = PREDEFINED_SERVERS[0].id;
-                    confirmRestart();
-                }
             }
         });
     };
@@ -291,7 +273,7 @@ function EndpointTab() {
                 <div className="vc-endpoint-status-left">
                     <WebsiteIcon height={20} width={20} />
                     <div>
-                        <Paragraph weight="bold">{restartPending ? `Restart to connect to ${active.name}` : `Connected to ${active.name}`}</Paragraph>
+                        <Paragraph weight="bold">{switchPending ? `Not connected to ${active.name} yet` : `Connected to ${active.name}`}</Paragraph>
                         <Paragraph size="sm" className="vc-endpoint-muted">{active.host}</Paragraph>
                         {info?.instanceName && <Paragraph size="sm" className={Margins.top8}>{info.instanceName}</Paragraph>}
                         {info?.instanceDescription && <Paragraph size="sm" className="vc-endpoint-muted">{info.instanceDescription}</Paragraph>}
@@ -305,12 +287,16 @@ function EndpointTab() {
                     </div>
                 </div>
                 <div className="vc-endpoint-status-right">
-                    {restartPending ? "Restart needed" : <><DoubleCheckmarkIcon height={16} width={16} />Connected</>}
+                    {switchPending
+                        ? <Button size="small" onClick={() => location.reload()}>Reload</Button>
+                        : <><DoubleCheckmarkIcon height={16} width={16} />Connected</>}
                 </div>
             </Card>
 
-            <Heading tag="h2" className={Margins.top20}>Servers</Heading>
-            <Paragraph className={classes(Margins.bottom8, "vc-endpoint-muted")}>Pick a Spacebar backend to connect to. Changing this requires a restart.</Paragraph>
+            <Divider className={Margins.top20} />
+
+            <Heading className={Margins.top20}>Servers</Heading>
+            <Paragraph className={Margins.bottom16}>Pick the server to connect to. Switching happens right away, only going to or from Discord reloads the client.</Paragraph>
 
             <div className="vc-endpoint-server-list">
                 {PREDEFINED_SERVERS.map(server => (
@@ -370,18 +356,16 @@ function EndpointTab() {
                 </div>
             )}
 
-            <Heading tag="h2" className={Margins.top24}>Accounts</Heading>
-            <Paragraph className={classes(Margins.bottom8, "vc-endpoint-muted")}>
+            <Divider className={Margins.top20} />
+
+            <Heading className={Margins.top20}>Accounts</Heading>
+            <Paragraph className={Margins.bottom16}>
                 Link the account you're currently on to the server selected above. Switching to a linked
-                account from Discord's own account switcher will switch to its server too (a reload happens
-                once the switch finishes).
+                account from Discord's own account switcher switches to its server too.
             </Paragraph>
             <AccountLinkRow />
 
             {ChangeEndpoint.canCreateRegistrationTokens() && <RegistrationTokens />}
-
-            <Heading tag="h4" className={Margins.top24}>About</Heading>
-            <Paragraph size="sm" className="vc-endpoint-muted">Spacebar is the default instance. Add a custom server to connect to a different one instead.</Paragraph>
         </div>
     );
 }

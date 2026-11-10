@@ -132,7 +132,7 @@ export const settings = definePluginSettings({
         type: OptionType.CUSTOM,
         description: "Per-account backend map. Keys are Discord user IDs, values are backend ids " +
             "(a PREDEFINED_SERVERS id or a customServers id). When set, switching to " +
-            "that account via Discord's own account switcher also switches the backend, followed by a reload.",
+            "that account via Discord's own account switcher also switches the backend.",
         default: {} as Record<string, string>
     },
     accountAvatars: {
