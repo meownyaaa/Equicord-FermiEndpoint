@@ -727,8 +727,8 @@ async function loadInstanceLimits() {
     instanceLimits.maxUsername = body?.user?.maxUsername ?? instanceLimits.maxUsername;
 }
 
-function boostPerks() {
-    const count = settings.store.boostCount;
+function boostPerks(realCount?: number) {
+    const count = realCount || settings.store.boostCount;
     const tier = BOOST_TIER_THRESHOLDS.filter(t => count >= t).length;
     return { count, tier, features: tier === BOOST_TIER_THRESHOLDS.length ? BOOST_FEATURES : [] };
 }
@@ -742,7 +742,7 @@ function stripSpoofedFeatures(guildId: string, body: string) {
         if (!Array.isArray(payload.features)) return body;
         const real = realGuildFeatures.get(guildId);
         if (real) {
-            const spoofed = new Set<string>(boostPerks().features.filter(f => !real.includes(f)));
+            const spoofed = new Set<string>(BOOST_FEATURES.filter(f => !real.includes(f)));
             payload.features = payload.features.filter((f: string) => !spoofed.has(f));
         } else {
             delete payload.features;
@@ -755,8 +755,8 @@ function stripSpoofedFeatures(guildId: string, body: string) {
 
 function maxOutGuildPremium(guild: any) {
     if (!guild) return;
-    const { count, tier, features } = boostPerks();
     const properties = guild.properties ?? guild;
+    const { count, tier, features } = boostPerks(guild.premium_subscription_count ?? properties.premium_subscription_count);
     const id = guild.id ?? properties.id;
     if (id && Array.isArray(properties.features)) realGuildFeatures.set(id, [...properties.features]);
     properties.premium_tier = tier;
@@ -767,8 +767,8 @@ function maxOutGuildPremium(guild: any) {
 // guilds that finished loading before this interceptor was installed never
 // pass through it, so they'd stay stuck at tier 0 forever. patch those directly too.
 function maxOutLoadedGuilds() {
-    const { count, tier, features } = boostPerks();
     for (const guild of GuildStore.getGuildsArray()) {
+        const { count, tier, features } = boostPerks(guild.premiumSubscriberCount);
         guild.premiumTier = tier;
         guild.premiumSubscriberCount = count;
         for (const feature of features) guild.features.add(feature);
