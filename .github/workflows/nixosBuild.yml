@@ -1,7 +1,6 @@
 name: NixOS Build
 on:
     workflow_dispatch:
-    
 env:
     FORCE_COLOR: true
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

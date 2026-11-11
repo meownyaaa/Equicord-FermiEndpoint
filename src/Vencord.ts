@@ -124,17 +124,6 @@ let notifiedForUpdatesThisSession = false;
 async function runUpdateCheck() {
     if (IS_UPDATER_DISABLED) return;
 
-    const notify = (data: NotificationData) => {
-        if (notifiedForUpdatesThisSession) return;
-        notifiedForUpdatesThisSession = true;
-
-        setTimeout(() => showNotification({
-            permanent: true,
-            noPersist: true,
-            ...data
-        }), 10_000);
-    };
-
     try {
         const isOutdated = await checkForUpdates();
         if (!isOutdated) return;

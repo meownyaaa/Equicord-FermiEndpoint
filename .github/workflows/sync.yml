@@ -1,32 +1,32 @@
 name: Weekly repository sync
 
 on:
-  workflow_dispatch: 
-  
-jobs:
-  sync-fork:
-    runs-on: ubuntu-latest
-    outputs:
-      timestamp: ${{ steps.time.outputs.timestamp }}
-    permissions:
-      contents: write
-    steps:
-      - name: Hide Sensitive Inputs
-        uses: levibostian/action-hide-sensitive-inputs@v1
-        
-      - name: Checkout Fork
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 
-          token: ${{ secrets.PAT }}
-        
-      - name: Sync Fork with Upstream
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
-        run: |
-          gh repo sync ${{ github.repository }} -b ${{ github.ref_name }}
+    workflow_dispatch:
 
-      - name: get current time for build date
-        id: time
-        run: |
-          echo "timestamp=$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_OUTPUT
+jobs:
+    sync-fork:
+        runs-on: ubuntu-latest
+        outputs:
+            timestamp: ${{ steps.time.outputs.timestamp }}
+        permissions:
+            contents: write
+        steps:
+            - name: Hide Sensitive Inputs
+              uses: levibostian/action-hide-sensitive-inputs@v1
+
+            - name: Checkout Fork
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  token: ${{ secrets.PAT }}
+
+            - name: Sync Fork with Upstream
+              env:
+                  GH_TOKEN: ${{ secrets.PAT }}
+              run: |
+                  gh repo sync ${{ github.repository }} -b ${{ github.ref_name }}
+
+            - name: get current time for build date
+              id: time
+              run: |
+                  echo "timestamp=$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_OUTPUT
