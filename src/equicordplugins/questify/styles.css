@@ -56,17 +56,29 @@
 }
 
 /* Quest name color. */
-.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > [class*="questName_"] {
+.questify-quest-item-restyle
+    > div
+    > div[--tile_rewardDescriptionContainer]
+    > div[--tile_textContainer]
+    > [class*="questName_"] {
     color: var(--questify-quest-name) !important;
 }
 
 /* Reward title + Orbs reward title text color. */
-.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] [class*="header_"] {
+.questify-quest-item-restyle
+    > div
+    > div[--tile_rewardDescriptionContainer]
+    > div[--tile_textContainer]
+    [class*="header_"] {
     color: var(--questify-reward-title) !important;
 }
 
 /* Quest description text color. */
-.questify-quest-item-restyle > div > div[--tile_rewardDescriptionContainer] > div[--tile_textContainer] > div[class*="description_"] {
+.questify-quest-item-restyle
+    > div
+    > div[--tile_rewardDescriptionContainer]
+    > div[--tile_textContainer]
+    > div[class*="description_"] {
     color: var(--questify-reward-description) !important;
 }
 
@@ -79,7 +91,12 @@
     color: var(--questify-reward-description) !important;
 }
 
-.questify-quest-item-contrast-logo > div[--hero_container] > div[--hero_positionContentOverBackground] > div[--hero_contents] > div[--hero_partnerBranding] > img {
+.questify-quest-item-contrast-logo
+    > div[--hero_container]
+    > div[--hero_positionContentOverBackground]
+    > div[--hero_contents]
+    > div[--hero_partnerBranding]
+    > img {
     filter: drop-shadow(0 0 10px rgb(0 0 0 / 80%));
 }
 

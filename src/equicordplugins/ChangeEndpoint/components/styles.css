@@ -42,7 +42,9 @@
     justify-content: space-between;
     cursor: pointer;
     padding: 0.75em 1em;
-    transition: border-color 0.15s ease, background-color 0.15s ease;
+    transition:
+        border-color 0.15s ease,
+        background-color 0.15s ease;
 }
 
 .vc-endpoint-server-card:hover {
@@ -72,7 +74,9 @@
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition: background-color 0.15s ease, color 0.15s ease;
+    transition:
+        background-color 0.15s ease,
+        color 0.15s ease;
 }
 
 .vc-endpoint-icon-button:hover {

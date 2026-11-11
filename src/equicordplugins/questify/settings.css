@@ -100,7 +100,11 @@
 
 .questify-setting [data-floating-ui-focusable][class*="selectDropdown"],
 .questify-setting [data-mana-component="select-input-field"] > [class*="selectField"],
-.questify-setting [data-mana-component="select-input-field"] [data-mana-component="tag-group"] > * > div {
+.questify-setting
+    [data-mana-component="select-input-field"]
+    [data-mana-component="tag-group"]
+    > *
+    > div {
     border-radius: 3px;
 }
 
