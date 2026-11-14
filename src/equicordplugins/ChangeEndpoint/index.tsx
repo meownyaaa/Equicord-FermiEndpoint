@@ -2677,7 +2677,7 @@ export default definePlugin({
             find: /let\{width:\i,height:\i,maxWidth:\i,maxHeight:\i/,
             all: true,
             replacement: {
-                match: /let\{width:(\i),height:(\i),maxWidth:(\i),maxHeight:(\i)(?:,minWidth:\i=0,minHeight:\i=0)?\}=\i[^;]{0,100};/g,
+                match: /let\{width:(\i),height:(\i),maxWidth:(\i),maxHeight:(\i)(?:,\i:\i(?:=\w+)?)*\}=\i[^;]{0,100};/g,
                 replace: "$&null==$1&&($1=$3,$2=$4);"
             }
         },
@@ -2728,7 +2728,7 @@ export default definePlugin({
             find: /originalItem:\i,type:\(0,/,
             all: true,
             replacement: {
-                match: /originalItem:(\i),type:\(0,(\i\.\i)\)\(([\w$,]+)\)/,
+                match: /originalItem:(\i),type:\(0,(\i\.\i)\)\(([\w$,!]+)\)/,
                 replace: (_: string, item: string, fn: string, args: string) =>
                     `originalItem:${item},type:(()=>{let vcType=(0,${fn})(${args});return"OTHER"===vcType&&null!=${item}.content_type?(${item}.content_type.startsWith("video/")?"VIDEO":${item}.content_type.startsWith("image/")?"IMAGE":${item}.content_type.startsWith("audio/")?"AUDIO":vcType):vcType})()`
             }
