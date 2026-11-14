@@ -6,6 +6,7 @@
 
 import "./components/styles.css";
 
+import { plugins } from "@api/PluginManager";
 import { Settings } from "@api/Settings";
 import { Button, TextButton } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
@@ -22,7 +23,7 @@ import definePlugin, { PluginNative } from "@utils/types";
 import type { Channel, ExpressionPickerStoreState, GuildFeatures, Stream, User } from "@vencord/discord-types";
 import { ChannelType, CloudUploadPlatform } from "@vencord/discord-types/enums";
 import { extractAndLoadChunksLazy, findByCodeLazy, findByPropsLazy, findComponentByCodeLazy, findLazy, findStoreLazy } from "@webpack";
-import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, CloudUploader, Constants, ContextMenuApi, DraftType, ExpressionPickerStore, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageActions, Modal, NavigationRouter, PendingReplyStore, PermissionsBits, PermissionStore, PresenceStore, ReactDOM, ReadStateStore, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
+import { Alerts, ApplicationStreamingSettingsStore, ApplicationStreamingStore, AuthenticationStore, Avatar, ChannelMemberStore, ChannelStore, CloudUploader, Constants, ContextMenuApi, DraftType, ExpressionPickerStore, FluxDispatcher, GIFPickerViewStore, GuildMemberStore, GuildStore, LocaleStore, MaskedLink, Menu, MessageActions, MessageStore, Modal, NavigationRouter, PendingReplyStore, PermissionsBits, PermissionStore, PresenceStore, ReactDOM, ReadStateStore, RestAPI, SelectedChannelStore, SelectedGuildStore, SettingsRouter, showToast, SnowflakeUtils, useEffect, useRef, UserStore, useState, VoiceStateStore } from "@webpack/common";
 import type { ComponentType, ReactElement } from "react";
 
 import { guildifyAst } from "./guildTerminology";
@@ -434,6 +435,30 @@ function uninstallDaveClientConnectGuard() {
 
 let originalGetActivities: typeof PresenceStore.getActivities | null = null;
 
+let imageSrcDescriptor: PropertyDescriptor | undefined;
+
+// fixImagesQuality points the image modal at cdn.discordapp.com, keep other backends on their own host
+function installImageHostGuard() {
+    const plugin = plugins.FixImagesQuality as { getSrc?(props: { src?: string; }, freeze?: boolean): string | undefined; } | undefined;
+    if (!plugin?.getSrc || imageSrcDescriptor) return;
+    imageSrcDescriptor = Object.getOwnPropertyDescriptor(plugin, "getSrc");
+    const original = plugin.getSrc;
+    plugin.getSrc = function (props, freeze) {
+        const result = original.call(this, props, freeze);
+        const source = props?.src ? parseUrl(props.src) : null;
+        const url = result ? parseUrl(result) : null;
+        if (!source || !url || url.host === source.host || DISCORD_HOST_RE.test(source.host)) return result;
+        url.host = source.host;
+        return url.toString();
+    };
+}
+
+function uninstallImageHostGuard() {
+    if (!imageSrcDescriptor) return;
+    Object.defineProperty(plugins.FixImagesQuality, "getSrc", imageSrcDescriptor);
+    imageSrcDescriptor = undefined;
+}
+
 function installActivityUnfilter() {
     if (originalGetActivities) return;
     originalGetActivities = PresenceStore.getActivities;
@@ -589,6 +614,69 @@ function unsignedAttachmentKey(src: string) {
     if (!url || url.hostname !== cdn || !/^\/(ephemeral-)?attachments\//.test(url.pathname)) return null;
     for (const key of ["ex", "is", "hm"]) url.searchParams.delete(key);
     return url.toString();
+}
+
+const ATTACHMENT_REFRESH_INTERVAL = 30_000;
+let attachmentRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let attachmentRefreshBusy = false;
+let attachmentRefreshRetryAt = 0;
+
+function linkExpiry(link?: string) {
+    const ex = link ? parseUrl(link)?.searchParams.get("ex") : null;
+    const value = ex ? parseInt(ex, 16) : NaN;
+    return value > 1e11 ? value : value * 1000;
+}
+
+// spacebar signs attachment links for a short time and discord never renews the ones on loaded messages
+async function refreshExpiringAttachments() {
+    const channelId = SelectedChannelStore.getChannelId();
+    if (attachmentRefreshBusy || document.hidden || !channelId || getCdnHost() == null || Date.now() < attachmentRefreshRetryAt) return;
+
+    const deadline = Date.now() + 2 * ATTACHMENT_REFRESH_INTERVAL;
+    const expiring = (link?: string) => linkExpiry(link) < deadline;
+    const stale = MessageStore.getMessages(channelId)._array.filter(m => m.attachments.some(a => expiring(a.url) || expiring(a.proxy_url)));
+    const links: string[] = [...new Set(stale.flatMap(m => m.attachments.flatMap(a => [a.url, a.proxy_url])).filter(expiring))];
+    if (!links.length) return;
+
+    attachmentRefreshBusy = true;
+    try {
+        const fresh = new Map<string, string>();
+        for (let i = 0; i < links.length; i += 50) {
+            const batch = links.slice(i, i + 50);
+            const { body } = await RestAPI.post({ url: "/attachments/refresh-urls", body: { attachment_urls: batch } });
+            (body?.refreshed_urls ?? []).forEach((entry: string | { refreshed?: string; } | undefined, j: number) => {
+                const url = typeof entry === "string" ? entry : entry?.refreshed;
+                if (url && !expiring(url)) fresh.set(batch[j], url);
+            });
+        }
+        if (!fresh.size) throw new Error("The server returned no renewed links");
+        for (const message of stale) {
+            FluxDispatcher.dispatch({
+                type: "MESSAGE_UPDATE",
+                message: {
+                    id: message.id,
+                    channel_id: message.channel_id,
+                    attachments: message.attachments.map(a => ({ ...a, url: fresh.get(a.url) ?? a.url, proxy_url: fresh.get(a.proxy_url) ?? a.proxy_url }))
+                }
+            });
+        }
+    } catch (e) {
+        attachmentRefreshRetryAt = Date.now() + 5 * 60_000;
+        logger.warn("Couldn't renew attachment links", e);
+    } finally {
+        attachmentRefreshBusy = false;
+    }
+}
+
+function startAttachmentRefresh() {
+    attachmentRefreshTimer ??= setInterval(refreshExpiringAttachments, ATTACHMENT_REFRESH_INTERVAL);
+    document.addEventListener("visibilitychange", refreshExpiringAttachments);
+}
+
+function stopAttachmentRefresh() {
+    if (attachmentRefreshTimer) clearInterval(attachmentRefreshTimer);
+    attachmentRefreshTimer = null;
+    document.removeEventListener("visibilitychange", refreshExpiringAttachments);
 }
 
 async function flushGifRefresh() {
@@ -2197,6 +2285,7 @@ export default definePlugin({
             logger.warn(`${backendName(settings.store.backend)} has no API or gateway set, staying on Discord`);
             showToast({ text: `${backendName(settings.store.backend)} has no API or gateway set, so ChangeEndpoint stayed on Discord.`, variant: "critical" });
         }
+        installImageHostGuard();
         linkCurrentAccount();
         saveAccountAvatar();
 
@@ -2210,6 +2299,7 @@ export default definePlugin({
         if (onDiscord) return;
 
         loadGifProviders();
+        startAttachmentRefresh();
         startGuildOrderSync();
         started = true;
         installFetchSanitiser();
@@ -2253,7 +2343,9 @@ export default definePlugin({
 
     stop() {
         removeFromArray(SettingsPlugin.customEntries, e => e.key === "equicord_change_endpoint");
+        uninstallImageHostGuard();
         if (onDiscord) return;
+        stopAttachmentRefresh();
         stopGuildOrderSync();
         started = false;
         uninstallFetchSanitiser();
