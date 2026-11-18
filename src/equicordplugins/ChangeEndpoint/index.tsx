@@ -1907,6 +1907,27 @@ export default definePlugin({
     },
 
     refreshedGifSrc,
+
+    // spacebar has no external or application asset routes, so rich presence images resolve locally
+    localExternalAssets(urls: string[]) {
+        if (onDiscord) return null;
+        return {
+            body: urls.flatMap(url => {
+                const parsed = parseUrl(url);
+                return parsed ? [{ url, external_asset_path: `external/spacebar/${parsed.protocol.slice(0, -1)}/${parsed.host}${parsed.pathname}${parsed.search}` }] : [];
+            })
+        };
+    },
+
+    localApplicationAssets() {
+        return onDiscord ? null : { body: [] };
+    },
+
+    directAssetUrl(asset: string) {
+        if (onDiscord) return null;
+        const match = /^mp:external\/[^/]+\/(https?)\/(.+)$/.exec(asset);
+        return match ? `${match[1]}://${match[2]}` : null;
+    },
     sendGifUpload,
     useGifRefreshVersion,
 
@@ -2546,6 +2567,23 @@ export default definePlugin({
                 match: /\i=\[window\.GLOBAL_ENV\.CDN_HOST,window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT\?\.substring\(2\)\]\.map\(\i\.\i\)\.filter\(\i=>null!=\i&&""!==\i\)/,
                 replace: (chain: string) => refreshOnEnvChange(chain)
             }
+        },
+        {
+            find: "APPLICATION_EXTERNAL_ASSETS(",
+            replacement: [
+                {
+                    match: /let\{body:(\i)\}=await (\i\.\i)\.post\(\{url:(\i\.\i)\.APPLICATION_EXTERNAL_ASSETS\((\i)\),body:\{urls:(\i)\}/,
+                    replace: "let{body:$1}=$self.localExternalAssets($5)??await $2.post({url:$3.APPLICATION_EXTERNAL_ASSETS($4),body:{urls:$5}"
+                },
+                {
+                    match: /let\{body:(\i)\}=await (\i\.\i)\.get\(\{url:(\i\.\i)\.APPLICATION_ASSETS\((\i)\)/,
+                    replace: "let{body:$1}=$self.localApplicationAssets()??await $2.get({url:$3.APPLICATION_ASSETS($4)"
+                },
+                {
+                    match: /if\(null!=(\i)&&\1\.includes\(":"\)\)\{/,
+                    replace: "if(null!=$1&&$self.directAssetUrl($1))return $self.directAssetUrl($1);$&"
+                }
+            ]
         },
         {
             find: "ATTACHMENTS_REFRESH_URLS,body:{attachment_urls:",
