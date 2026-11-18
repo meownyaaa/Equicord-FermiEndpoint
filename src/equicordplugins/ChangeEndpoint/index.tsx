@@ -346,7 +346,7 @@ const ACTIVITY_SHAPE: PayloadShape = {
     assets: { large_image: true, large_text: true, small_image: true, small_text: true },
     secrets: { join: true, spectate: true, match: true },
     instance: true, flags: true, id: true, sync_id: true,
-    metadata: { button_urls: true, context_uri: true, album_id: true, artist_ids: true, type: true, label: true },
+    metadata: { button_urls: true, context_uri: true, album_id: true, artist_ids: true },
     session_id: true, platform: true, supported_platforms: true, status_display_type: true, buttons: true
 };
 
@@ -360,19 +360,24 @@ function pickKnownKeys(value: Record<string, any>, shape: PayloadShape) {
     return picked;
 }
 
+function sanitisePresence(presence: Record<string, any>) {
+    const activities = presence.activities.map((activity: Record<string, any>) => {
+        const picked = pickKnownKeys(activity, ACTIVITY_SHAPE);
+        if (typeof picked.flags === "number") picked.flags = String(picked.flags);
+        return picked;
+    });
+    return { ...pickKnownKeys(presence, PRESENCE_SHAPE), activities };
+}
+
 function sanitiseGatewayPayload(data: string) {
-    if (!data.includes('"op":3')) return data;
+    if (!/"op":[23][,}]/.test(data)) return data;
 
     try {
         const payload = JSON.parse(data);
-        if (payload?.op !== 3 || !Array.isArray(payload.d?.activities)) return data;
-
-        const activities = payload.d.activities.map((activity: Record<string, any>) => {
-            const picked = pickKnownKeys(activity, ACTIVITY_SHAPE);
-            if (typeof picked.flags === "number") picked.flags = String(picked.flags);
-            return picked;
-        });
-        const sanitised = JSON.stringify({ ...payload, d: { ...pickKnownKeys(payload.d, PRESENCE_SHAPE), activities } });
+        let sanitised: string;
+        if (payload?.op === 3 && Array.isArray(payload.d?.activities)) sanitised = JSON.stringify({ ...payload, d: sanitisePresence(payload.d) });
+        else if (payload?.op === 2 && Array.isArray(payload.d?.presence?.activities)) sanitised = JSON.stringify({ ...payload, d: { ...payload.d, presence: sanitisePresence(payload.d.presence) } });
+        else return data;
         if (sanitised === data) return data;
 
         logger.debug("Sanitised a presence update to the keys Spacebar accepts to avoid a 4002 close");
@@ -896,6 +901,23 @@ const MESSAGE_URL_RE = /\/channels\/\d+\/messages(\/\d+)?$/;
 // discord sends guild profile (server tag) reads/writes to /guilds/{id}/profile,
 // but spacebar never grew that route - it just uses /guilds/{id} for everything
 const GUILD_PROFILE_URL_RE = /(\/guilds\/\d+)\/profile$/;
+const DISCORD_PUBLIC_API_RE = /^\/v\d+\/(?:oauth2\/applications\/\d+\/rpc|games\/detectable\/exclusions)$/;
+const PUBLIC_APPLICATION_RE = /^\/v\d+\/applications\/(\d+)\/public(?:\?|$)/;
+const DETECTABLES_RE = /^\/detectables\/[\w-]+\.json$/;
+const discordPublicRequests = new WeakSet<XMLHttpRequest>();
+const discordApplicationIds = new Set<string>();
+
+// spacebar lacks discord's public app lookup and game detection lists, so those come from discord without a token
+function discordPublicUrl(url: string) {
+    const api = apiBase();
+    const route = url.startsWith(api) && url.slice(api.length);
+    if (route && DISCORD_PUBLIC_API_RE.test(route)) return `https://discord.com/api${route}`;
+    const application = route && PUBLIC_APPLICATION_RE.exec(route)?.[1];
+    if (application) return `https://discord.com/api/v9/oauth2/applications/${application}/rpc`;
+    const parsed = parseUrl(url);
+    if (parsed?.host === getCdnHost() && DETECTABLES_RE.test(parsed.pathname)) return `https://cdn.discordapp.com${parsed.pathname}`;
+    return null;
+}
 const GUILD_URL_RE = /\/guilds\/(\d+)$/;
 // profile-only fields the plain guild route doesn't know about, spacebar chokes on these.
 // description is NOT one of these - GuildUpdateSchema on /guilds/{id} supports it directly.
@@ -1114,6 +1136,16 @@ function installXHRSanitiser() {
             if (route && /^\/v\d+\/auth\//.test(route)) url = apiBase(pendingLoginBackend) + route;
         }
 
+        const publicUrl = discordPublicUrl(urlStr);
+        if (publicUrl) {
+            url = publicUrl;
+            discordPublicRequests.add(this);
+            const application = /\/applications\/(\d+)\/rpc$/.exec(publicUrl)?.[1];
+            if (application) this.addEventListener("readystatechange", () => {
+                if (this.readyState === 4 && this.status === 200) discordApplicationIds.add(application);
+            });
+        } else discordPublicRequests.delete(this);
+
         xhrUrls.set(this, url instanceof URL ? url.href : url);
         blockedRequests.delete(this);
         return Reflect.apply(OriginalOpen, this, [method, url, ...rest]);
@@ -1122,6 +1154,7 @@ function installXHRSanitiser() {
     const OriginalSetHeader = originalXHRSetHeader = XMLHttpRequest.prototype.setRequestHeader;
     XMLHttpRequest.prototype.setRequestHeader = function (name: string, value: string) {
         const url = xhrUrls.get(this);
+        if (name.toLowerCase() === "authorization" && discordPublicRequests.has(this)) return;
         if (url && name.toLowerCase() === "authorization" && !isTokenAllowed(value, url)) {
             logger.warn(`Blocked a request carrying another backend's token: ${new URL(url, location.origin).pathname}`);
             blockedRequests.add(this);
@@ -1919,8 +1952,25 @@ export default definePlugin({
         };
     },
 
-    localApplicationAssets() {
-        return onDiscord ? null : { body: [] };
+    discordPublicApplications(ids: string[]) {
+        if (onDiscord) return null;
+        return Promise.all(ids.map(id => fetch(`https://discord.com/api/v9/oauth2/applications/${id}/rpc`, { credentials: "omit" }).then(res => res.ok ? res.json() : null, () => null)))
+            .then(applications => {
+                const found = applications.filter(Boolean);
+                found.forEach(application => discordApplicationIds.add(application.id));
+                return { body: found };
+            });
+    },
+
+    discordAppIcon(id: string, hash: string) {
+        return discordApplicationIds.has(id) ? `https://cdn.discordapp.com/app-icons/${id}/${hash}.png` : null;
+    },
+
+    discordAppAssets(appId: string) {
+        if (onDiscord) return null;
+        return fetch(`https://discord.com/api/v9/oauth2/applications/${appId}/assets`, { credentials: "omit" })
+            .then(res => res.ok ? res.json() : [])
+            .then((assets: { id: string; }[]) => ({ body: assets.map(asset => ({ ...asset, id: `mp:external/spacebar/https/cdn.discordapp.com/app-assets/${appId}/${asset.id}.png` })) }), () => ({ body: [] }));
     },
 
     directAssetUrl(asset: string) {
@@ -2576,14 +2626,28 @@ export default definePlugin({
                     replace: "let{body:$1}=$self.localExternalAssets($5)??await $2.post({url:$3.APPLICATION_EXTERNAL_ASSETS($4),body:{urls:$5}"
                 },
                 {
-                    match: /let\{body:(\i)\}=await (\i\.\i)\.get\(\{url:(\i\.\i)\.APPLICATION_ASSETS\((\i)\)/,
-                    replace: "let{body:$1}=$self.localApplicationAssets()??await $2.get({url:$3.APPLICATION_ASSETS($4)"
+                    match: /let\{body:(\i)\}=await (\i\.\i\.get\(\{url:\i\.\i\.APPLICATION_ASSETS\((\i)\).{0,60}?\}\))/,
+                    replace: "let{body:$1}=await($self.discordAppAssets($3)??$2)"
                 },
                 {
                     match: /if\(null!=(\i)&&\1\.includes\(":"\)\)\{/,
                     replace: "if(null!=$1&&$self.directAssetUrl($1))return $self.directAssetUrl($1);$&"
                 }
             ]
+        },
+        {
+            find: 'path:"app-icons"',
+            replacement: {
+                match: /(?=\i\(\{endpoint:\i\.\i\.APPLICATION_ICON,path:"app-icons",id:(\i),hash:(\i),)/g,
+                replace: "$self.discordAppIcon($1,$2)??"
+            }
+        },
+        {
+            find: "APPLICATIONS_PUBLIC,query:",
+            replacement: {
+                match: /\i\.\i\.get\(\{url:\i\.\i\.APPLICATIONS_PUBLIC,query:new URLSearchParams\((\i)\.map.{0,120}?\}\)/,
+                replace: "($self.discordPublicApplications($1)??$&)"
+            }
         },
         {
             find: "ATTACHMENTS_REFRESH_URLS,body:{attachment_urls:",
