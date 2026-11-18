@@ -923,34 +923,43 @@ const GUILD_URL_RE = /\/guilds\/(\d+)$/;
 // description is NOT one of these - GuildUpdateSchema on /guilds/{id} supports it directly.
 const GUILD_PROFILE_ONLY_KEYS = ["brand_color_primary", "traits", "game_application_ids", "visibility"];
 
-function stripGuildProfileOnlyFields(body: string) {
+function stripGuildProfileOnlyFields(body: string): [string, Record<string, unknown>?] {
     try {
         const payload = JSON.parse(body);
-        for (const key of GUILD_PROFILE_ONLY_KEYS) delete payload[key];
+        const dropped = Object.fromEntries(GUILD_PROFILE_ONLY_KEYS.filter(key => key in payload).map(key => [key, payload[key]]));
+        for (const key in dropped) delete payload[key];
+        if (Object.entries(dropped).some(([key, value]) => key !== "visibility" && (Array.isArray(value) ? value.length : value != null)))
+            showToast({ text: `${backendName(connectedBackend ?? "")} doesn't store banner colors, traits or games, so those weren't saved.`, variant: "critical" });
         if ("custom_banner" in payload) {
             payload.discovery_splash = payload.custom_banner;
             delete payload.custom_banner;
         }
-        return JSON.stringify(payload);
+        return [JSON.stringify(payload), dropped];
     } catch {
-        return body;
+        return [body];
     }
 }
 
+// discord's own fallback when a guild has no profile, the guild tag tab crashes on a missing tag
+const GUILD_PROFILE_DEFAULTS = { tag: null, badge: null, badge_hash: null, badge_color_primary: null, badge_color_secondary: null };
+
 // the client's guild profile response parser reads icon_hash/custom_banner_hash,
 // not icon/banner - the plain guild route we redirect to only has the latter,
-// so without this the icon/banner show up blank until something else refetches them
-function expandGuildProfileFields(payload: any) {
+// so without this the icon/banner show up blank until something else refetches them.
+// fields spacebar can't store are echoed back so the settings form doesn't stay dirty
+function expandGuildProfileFields(payload: any, dropped?: Record<string, unknown>) {
     if (payload && typeof payload === "object") {
+        for (const [key, value] of Object.entries(GUILD_PROFILE_DEFAULTS)) payload[key] ??= value;
+        Object.assign(payload, dropped);
         if ("icon" in payload) payload.icon_hash = payload.icon;
-        if ("discovery_splash" in payload) payload.custom_banner_hash = payload.discovery_splash;
+        if ("discovery_splash" in payload) payload.custom_banner_hash = payload.discovery_splash || null;
     }
     return payload;
 }
 
-function expandToProfileShape(body: string) {
+function expandToProfileShape(body: string, dropped?: Record<string, unknown>) {
     try {
-        return JSON.stringify(expandGuildProfileFields(JSON.parse(body)));
+        return JSON.stringify(expandGuildProfileFields(JSON.parse(body), dropped));
     } catch {
         return body;
     }
@@ -1002,12 +1011,15 @@ function installFetchSanitiser() {
         if (GUILD_PROFILE_URL_RE.test(pathname)) {
             const newUrl = url.replace(GUILD_PROFILE_URL_RE, "$1");
             logger.debug(`redirecting ${pathname} to the plain guild route, spacebar doesn't have a /profile endpoint`);
+            let dropped: Record<string, unknown> | undefined;
             if (init && typeof init.body === "string") {
-                init = { ...init, body: stripGuildProfileOnlyFields(init.body) };
+                const [body, fields] = stripGuildProfileOnlyFields(init.body);
+                init = { ...init, body };
+                dropped = fields;
             }
             const response = await OriginalFetch(newUrl, init);
             const text = await response.text();
-            return new Response(expandToProfileShape(text), {
+            return new Response(expandToProfileShape(text, dropped), {
                 status: response.status,
                 statusText: response.statusText,
                 headers: response.headers
@@ -1075,6 +1087,7 @@ function installRegistrationTokenHook() {
     };
 }
 const flaggedGuildProfileRequests = new WeakSet<XMLHttpRequest>();
+const droppedGuildProfileFields = new WeakMap<XMLHttpRequest, Record<string, unknown>>();
 const guildEditRequests = new WeakMap<XMLHttpRequest, string>();
 
 function requireNativeGetter(descriptor: PropertyDescriptor | undefined): () => any {
@@ -1092,7 +1105,7 @@ function installGuildProfileResponseExpander(xhr: XMLHttpRequest) {
         configurable: true,
         get() {
             const raw = xhrResponseTextGetter.call(this);
-            return this.readyState === 4 ? expandToProfileShape(raw) : raw;
+            return this.readyState === 4 ? expandToProfileShape(raw, droppedGuildProfileFields.get(this)) : raw;
         }
     });
     Object.defineProperty(xhr, "response", {
@@ -1100,7 +1113,8 @@ function installGuildProfileResponseExpander(xhr: XMLHttpRequest) {
         get() {
             const raw = xhrResponseGetter.call(this);
             if (this.readyState !== 4) return raw;
-            return this.responseType === "json" ? expandGuildProfileFields(raw) : expandToProfileShape(raw);
+            const dropped = droppedGuildProfileFields.get(this);
+            return this.responseType === "json" ? expandGuildProfileFields(raw, dropped) : expandToProfileShape(raw, dropped);
         }
     });
 }
@@ -1172,7 +1186,11 @@ function installXHRSanitiser() {
         }
         if (flaggedGuildProfileRequests.has(this)) {
             flaggedGuildProfileRequests.delete(this);
-            if (typeof body === "string") body = stripGuildProfileOnlyFields(body);
+            if (typeof body === "string") {
+                const [stripped, dropped] = stripGuildProfileOnlyFields(body);
+                body = stripped;
+                if (dropped) droppedGuildProfileFields.set(this, dropped);
+            }
         }
         const guildId = guildEditRequests.get(this);
         if (guildId) {
@@ -1980,6 +1998,17 @@ export default definePlugin({
         const match = /^mp:external\/[^/]+\/(https?)\/(.+)$/.exec(asset);
         return match ? `${match[1]}://${match[2]}` : null;
     },
+
+    // spacebar proxies page embeds like youtube as if they were video files, without a proxy url discord plays them in an iframe
+    embedVideo<T extends { url?: string; proxyURL?: string; }>(video: T): T {
+        if (onDiscord || !video.proxyURL || /\.(mp4|webm|mov|m4v|ogv|mkv)$/i.test(parseUrl(video.url ?? "")?.pathname ?? "")) return video;
+        return { ...video, proxyURL: undefined };
+    },
+
+    // discord hides other users' activities until they're content classified, spacebar never classifies them
+    contentClassification(classification: unknown) {
+        return onDiscord || classification != null ? classification : { loaded: true };
+    },
     sendGifUpload,
     useGifRefreshVersion,
 
@@ -2451,7 +2480,7 @@ export default definePlugin({
             // same reason, icon just needs the same treatment
             replacement: {
                 match: /\.merge\(\{\.\.\.(\i),recipients:(\i)\.recipients,bitrate:\1\.bitrate\?\?\2\.bitrate\}\)/,
-                replace: ".merge({...$1,recipients:$2.recipients,bitrate:$1.bitrate??$2.bitrate,icon:$1.icon??$2.icon})"
+                replace: ".merge({...$1,recipients:$2.recipients,bitrate:$1.bitrate??$2.bitrate,icon:$1.icon===void 0?$2.icon:$1.icon})"
             }
         },
         {
@@ -2618,6 +2647,20 @@ export default definePlugin({
             replacement: {
                 match: /\i=\[window\.GLOBAL_ENV\.CDN_HOST,window\.GLOBAL_ENV\.MEDIA_PROXY_ENDPOINT\?\.substring\(2\)\]\.map\(\i\.\i\)\.filter\(\i=>null!=\i&&""!==\i\)/,
                 replace: (chain: string) => refreshOnEnvChange(chain)
+            }
+        },
+        {
+            find: "youtube|steam|imgur|vimeo|sketchfab",
+            replacement: {
+                match: /(?<=\.provider,\i\.video\)&&\(\i\.video=)\i\(\i\.video\)/,
+                replace: "$self.embedVideo($&)"
+            }
+        },
+        {
+            find: ".content_classification)?",
+            replacement: {
+                match: /(?<=\(0,\i\.\i\)\()\i\.content_classification(?=\)\?)/,
+                replace: "$self.contentClassification($&)"
             }
         },
         {

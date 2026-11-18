@@ -140,13 +140,13 @@ function CustomVideoPlayerComponent({ src, maxWidth, maxHeight, fileName, fileSi
 
 export const CustomVideoPlayer = ErrorBoundary.wrap(CustomVideoPlayerComponent, { noop: true });
 
-const seekableUrls = new Map<string, { url: Promise<string>; channelId?: string; expiry?: ReturnType<typeof setTimeout>; }>();
+const seekableUrls = new Map<string, { url: Promise<string | null>; channelId?: string; expiry?: ReturnType<typeof setTimeout>; }>();
 
 function releaseSeekable(src: string) {
     const entry = seekableUrls.get(src);
     if (!entry) return;
     clearTimeout(entry.expiry);
-    entry.url.then(URL.revokeObjectURL);
+    entry.url.then(url => url && URL.revokeObjectURL(url));
     seekableUrls.delete(src);
 }
 
@@ -154,7 +154,15 @@ export async function makeMediaSeekable({ target }: Event) {
     if (!(target instanceof HTMLMediaElement) || !/^https?:/.test(target.currentSrc)) return;
     if (target.seekable.length && target.seekable.end(0) >= target.duration) return;
     const src = target.currentSrc;
-    if (!seekableUrls.has(src)) seekableUrls.set(src, { url: fetch(src).then(res => res.blob()).then(blob => URL.createObjectURL(blob)), channelId: SelectedChannelStore.getChannelId() });
+    if (!seekableUrls.has(src)) seekableUrls.set(src, {
+        url: fetch(src)
+            .then(res => res.ok ? res.blob() : Promise.reject(res.status))
+            .then(blob => URL.createObjectURL(blob), () => {
+                seekableUrls.delete(src);
+                return null;
+            }),
+        channelId: SelectedChannelStore.getChannelId()
+    });
     const url = await seekableUrls.get(src)?.url;
     if (!url || target.currentSrc !== src) return;
     const { currentTime, paused } = target;
