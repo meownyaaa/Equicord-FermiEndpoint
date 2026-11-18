@@ -1402,6 +1402,7 @@ function switchBackendTo(id: string) {
     prepareTokenForBackend(id);
     applyBackendInPlace(id);
     FluxDispatcher.dispatch({ type: "LOGOUT", isSwitchingAccount: true, userId: AuthenticationStore.getId() });
+    FluxDispatcher.dispatch({ type: "LOGIN_STATUS_RESET" });
 }
 
 function openAccountOn(userId: string, token: string, backend: string) {
@@ -1543,6 +1544,7 @@ const THREAD_CHANNEL_TYPES = new Set([ChannelType.ANNOUNCEMENT_THREAD, ChannelTy
 
 function openSwitchAccountLanding() {
     AuthActions?.A?.logoutInternal?.({ isSwitchingAccount: true });
+    FluxDispatcher.dispatch({ type: "LOGIN_STATUS_RESET" });
     NavigationRouter.transitionTo("/login");
 }
 
