@@ -2009,6 +2009,10 @@ export default definePlugin({
     contentClassification(classification: unknown) {
         return onDiscord || classification != null ? classification : { loaded: true };
     },
+
+    showOwnButtons(activity?: { buttons?: string[]; }) {
+        return !onDiscord && !!activity?.buttons?.length;
+    },
     sendGifUpload,
     useGifRefreshVersion,
 
@@ -2661,6 +2665,13 @@ export default definePlugin({
             replacement: {
                 match: /(?<=\(0,\i\.\i\)\()\i\.content_classification(?=\)\?)/,
                 replace: "$self.contentClassification($&)"
+            }
+        },
+        {
+            find: "PRESS_CUSTOM_BUTTON",
+            replacement: {
+                match: /if\((\i)\)(return \i&&(\i)\?\.type===[^;]{0,120};if\(\3\?\.buttons!=null)/,
+                replace: "if($1&&!$self.showOwnButtons($3))$2"
             }
         },
         {
