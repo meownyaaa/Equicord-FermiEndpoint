@@ -108,7 +108,11 @@ async function getUrls(
             return metadataCache.get(query) ?? {};
         }
 
-        const metadata = await tryLookup(query);
+        const metadata = await tryLookup(query).catch(e => {
+            logger.warn("MusicBrainz lookup failed", e);
+            return null;
+        });
+        if (metadata === null) return {};
         if (!metadata) continue;
 
         const artist = metadata["artist-credit"]?.[0]?.artist;
