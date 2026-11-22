@@ -598,9 +598,30 @@ interface InstanceInfo {
 
 let instanceInfo: InstanceInfo | null = null;
 
+interface InstanceStats {
+    registeredUsers?: number;
+    guilds?: number;
+    messages?: number;
+    members?: number;
+}
+
+let instanceStats: InstanceStats | null = null;
+
 async function loadInstanceInfo() {
     const { body } = await RestAPI.get({ url: "/policies/instance" });
     instanceInfo = body ?? null;
+}
+
+async function loadInstanceStats() {
+    const { body } = await RestAPI.get({ url: "/policies/stats" });
+    const c = body?.counts;
+    if (!c) { instanceStats = null; return; }
+    instanceStats = {
+        registeredUsers: c.user,
+        guilds: c.guild,
+        messages: c.message,
+        members: c.members
+    };
 }
 
 const httpUrl = (url: string | null | undefined) => url && /^https?:\/\//.test(url) ? url : undefined;
@@ -1406,6 +1427,7 @@ function applyBackendInPlace(id: string) {
     pendingLoginBackend = null;
     canCreateRegistrationTokens = false;
     instanceInfo = null;
+    instanceStats = null;
     gifProviders = [];
     if (!syncing) return;
     startGuildOrderSync();
@@ -1907,6 +1929,11 @@ export default definePlugin({
     instanceInfo() {
         if (settings.store.backend !== connectedBackend || !instanceInfo) return null;
         return { ...instanceInfo, frontPage: httpUrl(instanceInfo.frontPage), tosPage: httpUrl(instanceInfo.tosPage) };
+    },
+
+    instanceStats() {
+        if (settings.store.backend !== connectedBackend || !instanceStats) return null;
+        return { ...instanceStats };
     },
 
     canCreateRegistrationTokens() {
@@ -2413,6 +2440,7 @@ export default definePlugin({
         installBoostPerkUnlocker();
         loadInstanceLimits().catch(e => logger.warn("Couldn't load instance limits, using Spacebar's defaults", e));
         loadInstanceInfo().catch(e => logger.warn("Couldn't load instance info", e));
+        loadInstanceStats().catch(e => logger.warn("Couldn't load instance stats", e));
         installGatewaySendSanitiser();
         installDaveClientConnectGuard();
         FluxDispatcher.addInterceptor(reactionEmojiInterceptor);

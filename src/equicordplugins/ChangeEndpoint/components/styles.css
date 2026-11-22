@@ -213,3 +213,18 @@
 .vc-endpoint-token-toggle {
     align-self: flex-start;
 }
+
+.vc-endpoint-stats-content {
+    padding: 0;
+}
+
+.vc-endpoint-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 16px;
+}
+
+.vc-endpoint-stats-grid p {
+    margin: 0;
+}

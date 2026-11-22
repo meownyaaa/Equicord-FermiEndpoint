@@ -18,7 +18,8 @@ import { type CustomServer,PREDEFINED_SERVERS } from "@equicordplugins/ChangeEnd
 import { copyWithToast } from "@utils/discord";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
-import { Alerts, React, RestAPI, TextInput, UserStore, useState } from "@webpack/common";
+import { Alerts, Modal, React, RestAPI, TextInput, UserStore, useEffect, useState } from "@webpack/common";
+import { openModal } from "@utils/modal";
 
 import ChangeEndpoint from "..";
 import { discover } from "../discovery";
@@ -231,6 +232,41 @@ function RegistrationTokens() {
     );
 }
 
+interface InstanceStats {
+    registeredUsers?: number;
+    guilds?: number;
+    messages?: number;
+    members?: number;
+}
+
+function StatsModalContent({ initialStats, onClose, transitionState }: { initialStats: InstanceStats | null; onClose(): void; transitionState: number; }) {
+    const [stats, setStats] = useState<InstanceStats | null>(initialStats);
+
+    useEffect(() => {
+        RestAPI.get({ url: "/policies/stats" }).then(({ body }) => {
+            const c = body?.counts;
+            if (c) setStats({ registeredUsers: c.user, guilds: c.guild, messages: c.message, members: c.members });
+        }).catch(() => {});
+    }, []);
+
+    return (
+        <Modal
+            transitionState={transitionState}
+            onClose={onClose}
+            size="sm"
+            title="Instance Stats"
+            actions={[{ text: "Close", variant: "secondary", onClick: onClose }]}
+        >
+            <div className="vc-endpoint-stats-grid">
+                <Paragraph size="sm"><strong>Registered users:</strong> {stats?.registeredUsers ?? "-"}</Paragraph>
+                <Paragraph size="sm"><strong>Guilds:</strong> {stats?.guilds ?? "-"}</Paragraph>
+                <Paragraph size="sm"><strong>Messages:</strong> {stats?.messages ?? "-"}</Paragraph>
+                <Paragraph size="sm"><strong>Members:</strong> {stats?.members ?? "-"}</Paragraph>
+            </div>
+        </Modal>
+    );
+}
+
 function EndpointTab() {
     settings.use(SETTING_KEYS);
     const [addingCustom, setAddingCustom] = useState(false);
@@ -239,6 +275,7 @@ function EndpointTab() {
     const { backend, customServers } = settings.store;
     const active = activeServerLabel();
     const info = ChangeEndpoint.instanceInfo();
+    const statsInfo = ChangeEndpoint.instanceStats();
     const switchPending = backend !== connectedBackend;
     const editingServer = editingId ? customServers.find(s => s.id === editingId) : undefined;
 
@@ -289,7 +326,13 @@ function EndpointTab() {
                 <div className="vc-endpoint-status-right">
                     {switchPending
                         ? <Button size="small" onClick={() => location.reload()}>Reload</Button>
-                        : <><DoubleCheckmarkIcon height={16} width={16} />Connected</>}
+                        : <div style={ { display: "flex", flexDirection: "column", gap: "4px", alignItems: "center" } }>
+                            <><DoubleCheckmarkIcon height={16} width={16} />Connected</>
+                            <Link className={Margins.top4} onClick={() => {
+                                const cached = statsInfo;
+                                openModal(p => <StatsModalContent initialStats={cached} onClose={p.onClose} transitionState={p.transitionState} />);
+                            }} style={ { color: "var(--brand-experiment)" } }>Instant stats</Link>
+                        </div>}
                 </div>
             </Card>
 
