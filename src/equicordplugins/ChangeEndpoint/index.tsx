@@ -250,6 +250,7 @@ interface VoiceSocket {
 }
 
 const republishedSockets = new WeakSet<VoiceSocket>();
+const videoSockets = new WeakMap<VoiceSocket, number>();
 
 // module level values discord reads from GLOBAL_ENV once, recomputed when the backend changes in place
 const envRefreshers: (() => void)[] = [];
@@ -2171,6 +2172,17 @@ export default definePlugin({
         return { type: answer.type, sdp: answer.sdp.replace(/x-google-max-bitrate=(\d+)/g, (_, max) => `x-google-max-bitrate=${Math.max(min, Number(max))};x-google-min-bitrate=${min}`) };
     },
 
+    delayVideoStart(socket: VoiceSocket, args: Parameters<VoiceSocket["video"]>) {
+        const [audioSsrc, videoSsrc, rtxSsrc, streams] = args;
+        const wasOn = videoSockets.get(socket);
+        videoSockets.set(socket, videoSsrc);
+        if (!videoSsrc || wasOn) return false;
+        socket.video(audioSsrc, 0, 0, streams);
+        videoSockets.set(socket, videoSsrc);
+        setTimeout(() => socket.video(audioSsrc, videoSsrc, rtxSsrc, streams), 400);
+        return true;
+    },
+
     republishAudio(socket: VoiceSocket, args: Parameters<VoiceSocket["video"]>) {
         const [audioSsrc, videoSsrc, rtxSsrc, streams] = args;
         if (!audioSsrc || republishedSockets.has(socket)) return;
@@ -3176,7 +3188,7 @@ export default definePlugin({
             predicate: () => getCdnHost() != null,
             replacement: {
                 match: /video\(\i,\i,\i,\i\)\{(?=this\.send\(12,)/,
-                replace: "$&$self.republishAudio(this,arguments);"
+                replace: "$&if($self.delayVideoStart(this,arguments))return;$self.republishAudio(this,arguments);"
             }
         },
         {
