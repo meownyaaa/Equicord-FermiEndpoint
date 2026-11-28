@@ -1661,6 +1661,18 @@ async function fetchNotFoundMembers() {
     fetchingMembers = false;
 }
 
+const LOCAL_VOICE_HOST = /^(10\.\d+|192\.168|172\.(1[6-9]|2\d|3[01])|127\.\d+|169\.254)\.\d+\.\d+:\d+$/;
+const voiceProxyPorts = new Map<string, number>();
+
+function startVoiceProxy(endpoint: string | null | undefined) {
+    const host = endpoint?.replace(/^wss?:\/\//, "").split("/")[0];
+    if (!host || !LOCAL_VOICE_HOST.test(host) || voiceProxyPorts.has(host) || typeof DiscordNative === "undefined") return;
+    const [ip, port] = host.split(":");
+    Native.startVoiceProxy(ip, Number(port)).then(local => {
+        if (local) voiceProxyPorts.set(host, local);
+    });
+}
+
 let heldVoiceState: { socket: VoiceStateSocket; state: VoiceStateArgs; streamKey: string; timer: ReturnType<typeof setTimeout>; } | null = null;
 let releasedVoiceState: VoiceStateArgs | null = null;
 
@@ -2120,6 +2132,15 @@ export default definePlugin({
         }
     },
 
+    voiceSocketUrl(url: string) {
+        const host = url.replace(/^wss:\/\//, "").split(/[/?]/)[0];
+        if (typeof DiscordNative === "undefined" && LOCAL_VOICE_HOST.test(host)) return url.replace("wss://", "ws://");
+        const local = voiceProxyPorts.get(host);
+        if (local) return url.replace(`wss://${host}`, `ws://127.0.0.1:${local}`);
+        startVoiceProxy(host);
+        return url;
+    },
+
     holdVoiceState(socket: VoiceStateSocket, state: VoiceStateArgs) {
         if (state === releasedVoiceState) return false;
         if (heldVoiceState) {
@@ -2364,6 +2385,14 @@ export default definePlugin({
             }, 3000);
         },
 
+        VOICE_SERVER_UPDATE({ endpoint }: { endpoint?: string | null; }) {
+            startVoiceProxy(endpoint);
+        },
+
+        STREAM_SERVER_UPDATE({ endpoint }: { endpoint?: string | null; }) {
+            startVoiceProxy(endpoint);
+        },
+
         STREAM_DELETE({ streamKey }: { streamKey: string; }) {
             if (heldVoiceState?.streamKey === streamKey) releaseVoiceState();
         },
@@ -2505,6 +2534,13 @@ export default definePlugin({
     },
 
     patches: [
+        {
+            find: 'location:"RTCControlSocket"',
+            replacement: {
+                match: /new WebSocket\((`\$\{this\.url\}\?v=\$\{\i\}`)\)/,
+                replace: "new WebSocket($self.voiceSocketUrl($1))"
+            }
+        },
         {
             find: /recipients:\i\.recipients,bitrate:\i\.bitrate\?\?\i\.bitrate\}/,
             // CHANNEL_UPDATE payloads that omit icon (e.g. a rename) get merged onto the

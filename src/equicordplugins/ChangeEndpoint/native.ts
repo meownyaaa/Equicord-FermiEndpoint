@@ -6,6 +6,7 @@
 
 import { ResponseHeaderPatchers } from "@main/csp";
 import { app, desktopCapturer, IpcMainInvokeEvent, session } from "electron";
+import { AddressInfo, connect, createServer } from "net";
 
 // spacebar voice servers listen on udp 6000, which chromium treats as an unsafe (x11) port and
 // silently refuses to send webrtc traffic to. this runs before app ready, so the switch still applies
@@ -52,4 +53,29 @@ export function unregisterDisplayMediaHandler(_event: IpcMainInvokeEvent) {
     if (!handlerRegistered) return;
     handlerRegistered = false;
     session.defaultSession.setDisplayMediaRequestHandler(null);
+}
+
+const PRIVATE_IPV4 = /^(10\.\d+|192\.168|172\.(1[6-9]|2\d|3[01])|127\.\d+|169\.254)\.\d+\.\d+$/;
+const voiceProxies = new Map<string, Promise<number>>();
+
+export function startVoiceProxy(_event: IpcMainInvokeEvent, host: unknown, port: unknown): Promise<number | null> {
+    if (typeof host !== "string" || !PRIVATE_IPV4.test(host) || typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
+        return Promise.resolve(null);
+    const key = `${host}:${port}`;
+    let proxy = voiceProxies.get(key);
+    if (!proxy) {
+        proxy = new Promise<number>((resolve, reject) => {
+            const server = createServer(client => {
+                const upstream = connect(port, host);
+                client.pipe(upstream).pipe(client);
+                client.on("error", () => upstream.destroy());
+                upstream.on("error", () => client.destroy());
+            });
+            server.once("error", reject);
+            server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
+        });
+        voiceProxies.set(key, proxy);
+        proxy.catch(() => voiceProxies.delete(key));
+    }
+    return proxy.catch(() => null);
 }
