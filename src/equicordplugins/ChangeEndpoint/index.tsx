@@ -250,7 +250,8 @@ interface VoiceSocket {
 }
 
 const republishedSockets = new WeakSet<VoiceSocket>();
-const videoSockets = new WeakMap<VoiceSocket, number>();
+const videoSockets = new WeakMap<VoiceSocket, { args: Parameters<VoiceSocket["video"]>; since: number; }>();
+let sendingVideo = false;
 
 // module level values discord reads from GLOBAL_ENV once, recomputed when the backend changes in place
 const envRefreshers: (() => void)[] = [];
@@ -2173,14 +2174,28 @@ export default definePlugin({
     },
 
     delayVideoStart(socket: VoiceSocket, args: Parameters<VoiceSocket["video"]>) {
-        const [audioSsrc, videoSsrc, rtxSsrc, streams] = args;
-        const wasOn = videoSockets.get(socket);
-        videoSockets.set(socket, videoSsrc);
-        if (!videoSsrc || wasOn) return false;
-        socket.video(audioSsrc, 0, 0, streams);
-        videoSockets.set(socket, videoSsrc);
-        setTimeout(() => socket.video(audioSsrc, videoSsrc, rtxSsrc, streams), 400);
+        if (sendingVideo) return false;
+        const state = videoSockets.get(socket);
+        const since = state?.since ?? Date.now();
+        videoSockets.set(socket, { args, since });
+        if (!args[1] || state?.args[1]) return false;
+        this.republishVideo(socket);
+        const wait = since + 3000 - Date.now();
+        if (wait > 0) setTimeout(() => this.republishVideo(socket), wait);
         return true;
+    },
+
+    republishVideo(socket: VoiceSocket) {
+        const send = (on: boolean) => {
+            const args = videoSockets.get(socket)?.args;
+            if (!args?.[1]) return;
+            const [audioSsrc, videoSsrc, rtxSsrc, streams] = args;
+            sendingVideo = true;
+            socket.video(audioSsrc, on ? videoSsrc : 0, on ? rtxSsrc : 0, streams);
+            sendingVideo = false;
+        };
+        send(false);
+        setTimeout(() => send(true), 400);
     },
 
     republishAudio(socket: VoiceSocket, args: Parameters<VoiceSocket["video"]>) {
